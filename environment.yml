@@ -1,0 +1,51 @@
+# Conda environment for building and running the CORE-SG experiment suite.
+#
+#   conda env create -f environment.yml
+#   conda activate coresg
+#
+# Deliberately does NOT include the CUDA toolkit: on a cluster you almost always
+# want the site's own CUDA (module load cuda/...) so the driver and toolkit
+# versions match. If the site has no module, uncomment the cuda-toolkit line and
+# pin it at or below the driver's supported version -- `nvidia-smi` prints the
+# maximum it supports in the top-right.
+#
+# The compilers here matter: the CUDA local-join kernel needs a host compiler
+# nvcc accepts. nvcc rejects GCC newer than its supported maximum (CUDA 12.x
+# tops out around GCC 13), which is a common and confusing cluster failure, so
+# GCC is pinned rather than left to whatever is newest.
+
+name: coresg
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11
+
+  # --- build toolchain ---------------------------------------------------
+  - cmake>=3.21
+  - ninja
+  - gxx=12          # nvcc-compatible; do not float this to the newest GCC
+  - make
+
+  # --- data preparation --------------------------------------------------
+  - numpy>=1.24
+  - scipy
+  - pandas          # FMA features.csv has a 3-level header
+  - h5py            # GloVe / ANN-benchmarks .hdf5
+  - scikit-learn>=1.3   # 20 Newsgroups, PCA, and HDBSCAN for the FISHDBC reference
+
+  # --- analysis ----------------------------------------------------------
+  - matplotlib
+  - seaborn
+  - jupyterlab
+
+  # --- optional: site CUDA is usually better ------------------------------
+  # - cuda-toolkit=12.4
+  # - cuda-nvcc=12.4
+
+  - pip
+  - pip:
+      # FISHDBC baseline. Not on PyPI, and not required unless you run
+      # scripts/baseline_fishdbc.py.
+      - git+https://github.com/matteodellamico/flexible-clustering

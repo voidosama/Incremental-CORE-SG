@@ -1,0 +1,30 @@
+# Line endings.
+#
+# The critical rule is the shell scripts: a .sh file checked out with CRLF fails
+# on Linux with "bad interpreter: /usr/bin/env bash^M", which is exactly the
+# kind of cryptic breakage you do not want the first time you touch a cluster.
+# Python is pinned to LF for the same reason (shebangs). Everything else is
+# normalised to LF in the repository and left to the platform on checkout.
+
+* text=auto
+
+*.sh   text eol=lf
+*.py   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+*.h    text
+*.hpp  text
+*.cpp  text
+*.cu   text
+*.cuh  text
+*.md   text
+*.txt  text
+
+# Binary, never touch
+*.fvecs binary
+*.bvecs binary
+*.hdf5  binary
+*.coresg binary
+*.png   binary
+*.pdf   binary
