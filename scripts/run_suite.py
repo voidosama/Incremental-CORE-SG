@@ -101,16 +101,25 @@ FAMILIES = {
 MATRIX = [
     # Quality of the bridge estimate. Needs the O(n^2) exact reference, so it
     # runs small -- and only `manifold` actually stresses it.
-    ("bridges", ["manifold_exact", "20ng_pca500", "fma_chroma", "fma_mfcc",
-                 "sift1m", "gist1m", "glove100"], dict(exact_limit=4000)),
+    ("bridges", ["manifold_exact", "20ng_pca500", "20ng_tfidf", "fma_chroma",
+                 "fma_mfcc", "sift1m", "gist1m", "glove100"], dict(exact_limit=4000)),
 
     # Ambient vs intrinsic dimensionality in the budget.
-    ("budget", ["manifold_exact", "20ng_pca500", "fma_mfcc", "sift1m", "gist1m",
-                "glove100"], dict(exact_limit=4000)),
+    # 20ng_tfidf carries the extreme case and has to be here: at d=1000 the
+    # ambient rule asks for more anti-hubs than there are points, so it selects
+    # every one and the "approximation" silently becomes the exact MST it is
+    # meant to replace. No other set shows that as starkly.
+    ("budget", ["manifold_exact", "20ng_pca500", "20ng_tfidf", "fma_mfcc", "sift1m",
+                "gist1m", "glove100"], dict(exact_limit=4000)),
 
     # Incremental vs full rebuild, and arrival order.
-    ("incremental", ["manifold_mid", "fma_chroma", "fma_mfcc", "20ng_pca500",
-                     "sift1m", "gist1m", "glove100"], dict(batches=8)),
+    # manifold_wide belongs in the full-scale experiments, not in bridges or
+    # budget: those cap n at 4000, where 300 clusters leave ~13 points each and
+    # the graph stops fragmenting -- destroying the 273-component structure that
+    # makes it worth running. Here components_before_repair answers the coverage
+    # question at full scale, with no quadratic reference needed.
+    ("incremental", ["manifold_mid", "manifold_wide", "fma_chroma", "fma_mfcc",
+                     "20ng_pca500", "sift1m", "gist1m", "glove100"], dict(batches=8)),
     ("arrival", ["manifold_mid", "fma_mfcc", "sift1m"], dict(batches=8)),
 
     # The point of CORE-SG: many MSTs from one graph.
@@ -121,7 +130,7 @@ MATRIX = [
     ("sensitivity", ["manifold_mid", "fma_mfcc", "sift1m"], dict()),
 
     # Long-horizon drift: many small batches, quality sampled at every one.
-    ("drift", ["manifold_mid", "fma_mfcc", "sift1m"], dict(batches=25)),
+    ("drift", ["manifold_mid", "manifold_wide", "fma_mfcc", "sift1m"], dict(batches=25)),
 
     # Scaling. GPU rows only produce anything on a multi-GPU machine.
     ("scaling", ["manifold_mid", "sift1m", "gist1m"], dict()),
