@@ -7,6 +7,23 @@ caught one bug that would have silently corrupted every scaling row.
 
 ---
 
+## 0. Get the code
+
+Clone it — do not copy it. The repository is ~500 KB; the data is ~11.5 GB and is fetched
+separately in step 3, on the machine that needs it. Copying data over SSH is what causes
+the timeouts.
+
+```bash
+git clone <your-repo-url> coresg && cd coresg
+```
+
+To pick up changes later:
+
+```bash
+git pull            # code only; data and results are gitignored and untouched
+cmake --build build -j
+```
+
 ## 1. Environment
 
 ```bash
@@ -50,23 +67,26 @@ compiler error; the pin in `environment.yml` is there to prevent it.
 
 ## 3. Data
 
+One command, run on the cluster. Downloads the public archives from their original hosts,
+extracts them, derives the `.fvecs` files, and generates the synthetic families:
+
 ```bash
-python scripts/prepare_datasets.py newsgroups --out-dir data
-python scripts/prepare_datasets.py fma data/fma_metadata.zip --out-dir data
-python scripts/prepare_datasets.py hdf5 data/glove-100-angular.hdf5 --key train \
-       --out data/glove100.fvecs
-python scripts/run_suite.py --generate          # synthetic families, incl. the 10M set
+bash scripts/fetch_data.sh
 ```
 
-Copy the already-downloaded archives (`sift.tar.gz`, `gist.tar.gz`,
-`glove-100-angular.hdf5`, `fma_metadata.zip`) rather than re-downloading — ~3.5 GB, and
-the TEXMEX host is slow. Extract with `tar -xzf`.
+Safe to re-run: downloads resume, size-verified files are skipped, and preparation steps
+are skipped if their output exists. Subsets work too: `bash scripts/fetch_data.sh sift glove`.
 
-Disk needed: ~14 GB for data plus ~1.3 GB for the 10M synthetic set.
+~3.5 GB downloaded, ~14 GB after preparation (the GIST archive alone is 2.6 GB, and the
+TEXMEX host is slow — start this early).
 
 ```bash
 python scripts/run_suite.py --list      # should report 37 runs, 0 skipped
 ```
+
+> Steps 1–3 can be done in one shot: `bash scripts/bootstrap_cluster.sh` builds, tests,
+> fetches data, and finishes with the preflight below. It stops before running any
+> experiment so you can read the preflight output first.
 
 ---
 
