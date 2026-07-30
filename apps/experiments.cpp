@@ -656,9 +656,16 @@ void exp_scaling(const Options& o, const Data& d, Csv* csv) {
 
     // Device-count scaling. Instances are pinned to a multiple of the device
     // count so the queue balances.
+    // Instance counts are FIXED across device counts, not scaled with them.
+    // Tying instances to the device count changes the amount of work as devices
+    // are added, so the resulting numbers are not a strong-scaling curve and can
+    // read as a slowdown. With a fixed count, `1 GPU x 8` vs `4 GPUs x 8` is a
+    // real speed-up measurement. Counts are multiples of the largest device
+    // count so the queue divides evenly.
+    const std::uint32_t nd = static_cast<std::uint32_t>(devices.size());
+    const std::vector<std::uint32_t> instance_counts = {nd, nd * 2u, nd * 4u};
     for (std::size_t ngpu = 1; ngpu <= devices.size(); ++ngpu) {
-        const std::uint32_t g = static_cast<std::uint32_t>(ngpu);
-        for (std::uint32_t instances : {g, g * 2u, g * 4u}) {
+        for (std::uint32_t instances : instance_counts) {
             for (int s = 0; s < std::min(o.seeds, 3); ++s) {
                 const std::uint64_t seed = 5000 + s;
                 CoreSGParams p = base_params(o, d, seed);

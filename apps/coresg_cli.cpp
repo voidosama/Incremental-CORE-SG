@@ -243,12 +243,31 @@ int cmd_preflight(const Args& a) {
     std::printf("\n=== all devices together ===\n");
     std::vector<int> all;
     for (const DeviceInfo& d : devs) all.push_back(d.id);
+    // Instance count is held FIXED across the two arms. Comparing one instance
+    // on one device against many instances on many devices measures different
+    // amounts of work, not parallel speed-up, and reads as a slowdown.
+    const std::uint32_t fixed_instances =
+        std::max<std::uint32_t>(4u, static_cast<std::uint32_t>(all.size()));
+    double one_device_seconds = 0.0;
+    try {
+        CoreSGParams p;
+        p.k_max = k;
+        p.backend.prefer_gpu = true;
+        p.backend.device_ids.assign(1, all.front());
+        p.incr.instances = fixed_instances;
+        p.incr.min_base_for_split = 1000;
+        p.incr.instance_nnd.k = k;
+        CoreSG sg(p);
+        one_device_seconds = sg.build(raw.data(), n, dim).knn_seconds;
+    } catch (const std::exception& e) {
+        check(false, "single-device reference run", e.what());
+    }
     try {
         CoreSGParams p;
         p.k_max = k;
         p.backend.prefer_gpu = true;
         p.backend.device_ids = all;
-        p.incr.instances = static_cast<std::uint32_t>(all.size()) * 2u;
+        p.incr.instances = fixed_instances;
         p.incr.min_base_for_split = 1000;
         p.incr.instance_nnd.k = k;
         CoreSG sg(p);
@@ -271,11 +290,20 @@ int cmd_preflight(const Args& a) {
               st.knn_stats.jobs_out_of_memory
                   ? std::to_string(st.knn_stats.jobs_out_of_memory) + " OOM"
                   : "");
-        if (single_device_seconds > 0.0 && devs.size() > 1) {
-            const double ratio = single_device_seconds / std::max(st.knn_seconds, 1e-9);
-            std::snprintf(buf, sizeof(buf), "%.2fx vs one device (Amdahl caps this well "
-                                            "below the device count)", ratio);
-            std::printf("  [info] multi-device speed-up %s\n", buf);
+        if (one_device_seconds > 0.0 && devs.size() > 1) {
+            const double ratio = one_device_seconds / std::max(st.knn_seconds, 1e-9);
+            const double phase = st.knn_stats.instance_seconds +
+                                 st.knn_stats.merge_seconds + st.knn_stats.refine_seconds;
+            const double f = phase > 0.0 ? st.knn_stats.instance_seconds / phase : 0.0;
+            const double ceiling = 1.0 / ((1.0 - f) + f / double(devs.size()));
+            std::printf("  [info] %u instances: %.3fs on 1 device -> %.3fs on %zu "
+                        "= %.2fx (Amdahl ceiling %.2fx at f=%.2f)\n",
+                        fixed_instances, one_device_seconds, st.knn_seconds, devs.size(),
+                        ratio, ceiling, f);
+            if (ratio < 1.0) {
+                std::printf("  [warn] slower on more devices -- at this size the per-job "
+                            "transfer dominates; the suite runs far larger instances\n");
+            }
         }
         std::printf("  [info] largest instance: %zu nodes, %s resident\n",
                     st.knn_stats.largest_instance,
