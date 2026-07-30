@@ -31,6 +31,19 @@ conda env create -f environment.yml
 conda activate coresg
 ```
 
+FISHDBC is **not** in that file on purpose — it is an optional baseline, and its build
+would otherwise be able to abort the whole environment creation. Install it only if you
+intend to run `scripts/baseline_fishdbc.py` (step 6):
+
+```bash
+pip install --no-build-isolation git+https://github.com/matteodellamico/flexible-clustering
+python -c "from flexible_clustering import FISHDBC; print('ok')"
+```
+
+`--no-build-isolation` is required: its `setup.py` imports Cython without declaring it as
+a build dependency, so pip's isolated build environment cannot find it. The flag lets it
+use the `cython` from the conda environment.
+
 CUDA comes from the site, not conda, so the toolkit matches the driver:
 
 ```bash

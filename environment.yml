@@ -40,12 +40,28 @@ dependencies:
   - seaborn
   - jupyterlab
 
+  # Needed to build the optional FISHDBC baseline from source (see below).
+  - cython
+
   # --- optional: site CUDA is usually better ------------------------------
   # - cuda-toolkit=12.4
   # - cuda-nvcc=12.4
 
   - pip
-  - pip:
-      # FISHDBC baseline. Not on PyPI, and not required unless you run
-      # scripts/baseline_fishdbc.py.
-      - git+https://github.com/matteodellamico/flexible-clustering
+
+# FISHDBC is deliberately NOT installed here.
+#
+# It is an optional baseline -- only scripts/baseline_fishdbc.py needs it -- and
+# putting it in this file makes an optional dependency able to fail the entire
+# environment creation, which is exactly what happened: its setup.py imports
+# Cython at build time without declaring it in pyproject.toml, so pip's isolated
+# build environment cannot see it and `conda env create` aborts.
+#
+# Install it separately, after activating the environment, and only if you plan
+# to run that baseline:
+#
+#     conda activate coresg
+#     pip install --no-build-isolation git+https://github.com/matteodellamico/flexible-clustering
+#
+# --no-build-isolation is what lets its setup.py see the `cython` installed
+# above. Verify with:  python -c "from flexible_clustering import FISHDBC"

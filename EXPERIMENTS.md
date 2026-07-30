@@ -186,10 +186,13 @@ HDBSCAN\* approximation that keeps an incremental MST fed by HNSW candidate edge
 the *opposite* design decision on the same problem (maintain an MST vs avoid maintaining
 one), which makes it worth comparing and mandatory to cite.
 
-`scripts/baseline_fishdbc.py` emits the same CSV schema. FISHDBC is not on PyPI:
+`scripts/baseline_fishdbc.py` emits the same CSV schema. FISHDBC is not on PyPI, and its
+`setup.py` imports Cython without declaring it as a build dependency, so pip's isolated
+build environment fails on it:
 
 ```bash
-pip install git+https://github.com/matteodellamico/flexible-clustering
+conda activate coresg     # provides cython
+pip install --no-build-isolation git+https://github.com/matteodellamico/flexible-clustering
 ```
 
 Verified working (2026-07-29, `manifold_mid`, 3000 points, 4 batches): ARI against exact
