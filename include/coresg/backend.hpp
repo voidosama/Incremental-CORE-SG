@@ -101,6 +101,11 @@ struct BackendOptions {
     /// whole machine, which is what you want when there is a single instance;
     /// raise it to trade intra-job parallelism for job throughput.
     unsigned cpu_slots = 1;
+    /// Finish a job on the host when the device runs out of memory. Right for
+    /// a production run; wrong for a capacity probe, where the OOM *is* the
+    /// result and falling back turns a two-second demonstration into a
+    /// multi-hour CPU descent over the whole data set.
+    bool oom_fallback = true;
 };
 
 /// Returns the CUDA backend when it is compiled in, at least one device is
@@ -114,7 +119,8 @@ std::unique_ptr<Backend> make_cpu_backend_slots(unsigned threads, unsigned slots
                                                 ThreadPool* pool = nullptr);
 
 #if CORESG_WITH_CUDA
-std::unique_ptr<Backend> make_cuda_backend(const std::vector<int>& device_ids);
+std::unique_ptr<Backend> make_cuda_backend(const std::vector<int>& device_ids,
+                                          bool oom_fallback = true);
 #endif
 
 bool cuda_available();

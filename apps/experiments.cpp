@@ -114,7 +114,30 @@ struct Options {
     unsigned threads = 0;
     std::string out = "results.csv";
     bool echo = true;
+    /// Comma-separated instance counts for the scaling experiment. Empty means
+    /// {devices, 2*devices, 4*devices}. The capacity run overrides it to reach
+    /// instances=1, which is the configuration that cannot fit on one card and
+    /// is therefore the whole point of that experiment.
+    std::string scaling_instances;
+    /// When a device runs out of memory the backend normally finishes the job
+    /// on the host. That is right for a production run and wrong for the
+    /// capacity probe: falling back means a 10M-point NN-Descent on the CPU,
+    /// turning a two-second demonstration into hours. Disable it there.
+    bool oom_fallback = true;
 };
+
+std::vector<std::uint32_t> parse_uint_list(const std::string& s) {
+    std::vector<std::uint32_t> out;
+    std::size_t start = 0;
+    while (start <= s.size()) {
+        const std::size_t comma = s.find(',', start);
+        const std::string tok = s.substr(start, comma - start);
+        if (!tok.empty()) out.push_back(static_cast<std::uint32_t>(std::stoul(tok)));
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return out;
+}
 
 struct Data {
     std::vector<float> values;
@@ -157,6 +180,7 @@ CoreSGParams base_params(const Options& o, const Data& d, std::uint64_t seed) {
     p.threads = o.threads;
     p.seed = seed;
     p.backend.prefer_gpu = o.gpu;
+    p.backend.oom_fallback = o.oom_fallback;
     p.incr.instances = 4;
     p.incr.min_base_for_split = 2000;
     p.incr.seed = seed;
@@ -663,7 +687,9 @@ void exp_scaling(const Options& o, const Data& d, Csv* csv) {
     // real speed-up measurement. Counts are multiples of the largest device
     // count so the queue divides evenly.
     const std::uint32_t nd = static_cast<std::uint32_t>(devices.size());
-    const std::vector<std::uint32_t> instance_counts = {nd, nd * 2u, nd * 4u};
+    const std::vector<std::uint32_t> instance_counts =
+        o.scaling_instances.empty() ? std::vector<std::uint32_t>{nd, nd * 2u, nd * 4u}
+                                    : parse_uint_list(o.scaling_instances);
     for (std::size_t ngpu = 1; ngpu <= devices.size(); ++ngpu) {
         for (std::uint32_t instances : instance_counts) {
             for (int s = 0; s < std::min(o.seeds, 3); ++s) {
@@ -706,6 +732,13 @@ void exp_scaling(const Options& o, const Data& d, Csv* csv) {
                 // per-device footprint has to stay flat as devices are added,
                 // because an instance only ever holds |sample| + |batch|
                 // vectors rather than the whole data set.
+                // The capacity claim lives or dies on these two: how many
+                // instances were asked for, and whether the device refused.
+                csv->row("scaling", d.name, d.n, d.dim, o.k, "gpus_x_instances",
+                         v + "x" + inst, seed, -1, "instances", double(instances));
+                csv->row("scaling", d.name, d.n, d.dim, o.k, "gpus_x_instances",
+                         v + "x" + inst, seed, -1, "jobs_out_of_memory",
+                         double(us.knn_stats.jobs_out_of_memory));
                 csv->row("scaling", d.name, d.n, d.dim, o.k, "gpus_x_instances",
                          v + "x" + inst, seed, -1, "largest_instance_nodes",
                          double(us.knn_stats.largest_instance));
@@ -908,6 +941,8 @@ int main(int argc, char** argv) {
         else if (a == "--base-fraction") o.base_fraction = std::atof(next().c_str());
         else if (a == "--exact-limit") o.exact_limit = std::strtoull(next().c_str(), nullptr, 10);
         else if (a == "--gpu") o.gpu = std::atoi(next().c_str()) != 0;
+        else if (a == "--scaling-instances") o.scaling_instances = next();
+        else if (a == "--no-oom-fallback") o.oom_fallback = false;
         else if (a == "--threads") o.threads = std::strtoul(next().c_str(), nullptr, 10);
         else if (a == "--out") o.out = next();
         else if (a == "--quiet") o.echo = false;

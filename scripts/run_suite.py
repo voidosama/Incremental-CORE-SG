@@ -87,6 +87,21 @@ FAMILIES = {
                            generate=dict(n=100000, dim=256, intrinsic=8, clusters=300,
                                          separation=40)),
 
+    # Extra fragmenting configurations at exact-reference scale. Claim C rested
+    # on manifold_exact alone, because every real data set turns out to have a
+    # connected k-NN graph and therefore cannot exercise the bridges at all.
+    # These vary the cluster count (hence the component count) at n=4000, which
+    # is cheap and multiplies the evidence from one data set to four.
+    "manifold_c8":   dict(group="manifold", path=data("manifold_c8.fvecs"), k=24,
+                          generate=dict(n=4000, dim=128, intrinsic=6, clusters=8,
+                                        separation=25)),
+    "manifold_c24":  dict(group="manifold", path=data("manifold_c24.fvecs"), k=24,
+                          generate=dict(n=4000, dim=64, intrinsic=4, clusters=24,
+                                        separation=30)),
+    "manifold_c32":  dict(group="manifold", path=data("manifold_c32.fvecs"), k=16,
+                          generate=dict(n=4000, dim=128, intrinsic=6, clusters=32,
+                                        separation=35)),
+
     # ---- capacity: does not fit on one 8 GB card --------------------------
     # k=64 on purpose: at ~848 B/point a single instance needs ~8.5 GB, which
     # does NOT fit on an 8 GB card. That is the point -- one instance OOMs,
@@ -101,16 +116,22 @@ FAMILIES = {
 MATRIX = [
     # Quality of the bridge estimate. Needs the O(n^2) exact reference, so it
     # runs small -- and only `manifold` actually stresses it.
-    ("bridges", ["manifold_exact", "20ng_pca500", "20ng_tfidf", "fma_chroma",
-                 "fma_mfcc", "sift1m", "gist1m", "glove100"], dict(exact_limit=4000)),
+    # seeds=2 on purpose: these set brute_force_limit = n, so the k-NN half is
+    # exact and the whole pipeline is deterministic -- every quality figure came
+    # back with a standard deviation of exactly 0.00000 across 5 seeds. Extra
+    # seeds buy timing jitter and nothing else.
+    ("bridges", ["manifold_exact", "manifold_c8", "manifold_c24", "manifold_c32",
+                 "20ng_pca500", "20ng_tfidf", "fma_chroma", "fma_mfcc",
+                 "sift1m", "gist1m", "glove100"], dict(exact_limit=4000, seeds=2)),
 
     # Ambient vs intrinsic dimensionality in the budget.
     # 20ng_tfidf carries the extreme case and has to be here: at d=1000 the
     # ambient rule asks for more anti-hubs than there are points, so it selects
     # every one and the "approximation" silently becomes the exact MST it is
     # meant to replace. No other set shows that as starkly.
-    ("budget", ["manifold_exact", "20ng_pca500", "20ng_tfidf", "fma_mfcc", "sift1m",
-                "gist1m", "glove100"], dict(exact_limit=4000)),
+    ("budget", ["manifold_exact", "manifold_c8", "manifold_c24", "manifold_c32",
+                "20ng_pca500", "20ng_tfidf", "fma_mfcc", "sift1m",
+                "gist1m", "glove100"], dict(exact_limit=4000, seeds=2)),
 
     # Incremental vs full rebuild, and arrival order.
     # manifold_wide belongs in the full-scale experiments, not in bridges or
@@ -134,7 +155,16 @@ MATRIX = [
 
     # Scaling. GPU rows only produce anything on a multi-GPU machine.
     ("scaling", ["manifold_mid", "sift1m", "gist1m"], dict()),
-    ("scaling", ["capacity10m"], dict(tag="capacity")),
+
+    # capacity10m's full scaling sweep already ran (36 configs on 10M points,
+    # ~2 days) and its rows are in results.csv -- do NOT schedule it again.
+    # What that sweep never tested is the configuration it existed for: the
+    # instance counts were {4,8,16}, all of which fit, so instances=1 (7.90 GiB,
+    # over an 8 GB card) never ran. This probe adds exactly that, with the OOM
+    # fallback disabled so a refused job is recorded in seconds instead of
+    # turning into a multi-hour CPU descent over 10M points.
+    ("scaling", ["capacity10m"],
+     dict(tag="oom", scaling_instances="1,2,4", seeds=1, no_oom_fallback=True)),
 ]
 
 
@@ -217,12 +247,19 @@ def build_commands(args):
                 if (row_name, label) in done:
                     cmds.append((None, f"{experiment:<12} {label:<24} done, skipping"))
                     continue
+            # Per-row seeds override the global default: bridges/budget are
+            # deterministic, capacity is expensive.
+            seeds = extra.get("seeds", args.seeds)
             cmd = [exe, "--experiment", experiment,
                    "--data", spec["path"], "--name", label,
                    "--k", str(spec.get("k", 32)),
                    "--metric", spec.get("metric", "l2"),
-                   "--seeds", str(args.seeds),
+                   "--seeds", str(seeds),
                    "--out", args.out, "--quiet"]
+            if extra.get("scaling_instances"):
+                cmd += ["--scaling-instances", extra["scaling_instances"]]
+            if extra.get("no_oom_fallback"):
+                cmd += ["--no-oom-fallback"]
             if spec.get("limit"):
                 cmd += ["--limit", str(spec["limit"])]
             if extra.get("exact_limit"):

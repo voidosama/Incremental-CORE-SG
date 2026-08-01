@@ -22,7 +22,8 @@ bool metric_to_code(MetricKind m, int* code) {
 
 class CudaBackend : public Backend {
 public:
-    explicit CudaBackend(const std::vector<int>& device_ids) : ids_(device_ids) {
+    CudaBackend(const std::vector<int>& device_ids, bool oom_fallback)
+        : ids_(device_ids), oom_fallback_(oom_fallback) {
         for (int id : ids_) {
             cuda::DeviceProps p;
             if (!cuda::get_device_props(id, &p)) {
@@ -94,6 +95,7 @@ public:
                 err.find("cudaMalloc") != std::string::npos) {
                 job.out_of_memory = true;
                 job.error = err;
+                if (!oom_fallback_) return;  // record it and stop; see BackendOptions
                 fallback_->run_knn_job(slot, job);
                 return;
             }
@@ -126,14 +128,16 @@ private:
     int device_for(unsigned slot) const { return ids_[slot < ids_.size() ? slot : 0]; }
 
     std::vector<int> ids_;
+    bool oom_fallback_ = true;
     std::vector<DeviceInfo> devices_;
     std::unique_ptr<Backend> fallback_;
 };
 
 }  // namespace
 
-std::unique_ptr<Backend> make_cuda_backend(const std::vector<int>& device_ids) {
-    return std::unique_ptr<Backend>(new CudaBackend(device_ids));
+std::unique_ptr<Backend> make_cuda_backend(const std::vector<int>& device_ids,
+                                          bool oom_fallback) {
+    return std::unique_ptr<Backend>(new CudaBackend(device_ids, oom_fallback));
 }
 
 }  // namespace coresg

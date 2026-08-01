@@ -341,6 +341,54 @@ cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_BUILD_TYPE=Release
 
 ---
 
+## 9a. Cluster run, 2026-08-01 (4x RTX 2080 SUPER)
+
+First full sweep. 14,878 rows, 5 seeds, 37 runs.
+
+**Incremental beats a full rebuild on every data set** — the strongest result in the set:
+
+| data set | recall (incremental) | recall (rebuild) | ARI vs rebuild |
+|---|---|---|---|
+| gist1m | **0.9771** | 0.8884 | 0.9910 |
+| glove100 | **0.9043** | 0.7742 | 0.9732 |
+| 20ng_pca500 | **0.9656** | 0.8246 | 0.9443 |
+| sift1m | **0.9968** | 0.9817 | 0.9992 |
+| manifold_mid | **0.9994** | 0.9960 | 0.9977 |
+
+Eight incremental batches cost 2.5–3x a *single* rebuild, i.e. ~3x cheaper than rebuilding
+per batch, at higher quality — the incremental path accumulates more total descent.
+
+**GPU strong scaling** (instance count fixed across device counts), speed-up on 4 GPUs at
+16 instances: gist1m **2.68x**, sift1m **2.53x**, manifold_mid **2.50x**, capacity10m
+**3.23x**. Mean parallel fraction f = 0.725, so the 4-GPU Amdahl ceiling is 2.19x — the
+larger data sets exceed it because f rises with instance size.
+
+**Budget: ambient is not a sublinear estimate.** It selects **100 % of n** on 20ng_pca500
+and gist1m, and 29–40 % everywhere else. Intrinsic uses 1.4–10 %, runs 5–30x faster, and
+costs at most 0.6 % in MST weight (0.1 % at x4).
+
+### What this run exposed
+
+**Only one data set exercised the bridges.** `components(knn_only)` was 1 on 20ng_pca500,
+fma_chroma, fma_mfcc, gist1m and glove100; 2 on sift1m; **16 on manifold_exact**. Five of
+seven real sets are connected, so their weight ratio of 1.00000 is vacuous — nothing was
+approximated. Claim C rested on a single data set. Fixed by adding `manifold_c8` /
+`manifold_c24` / `manifold_c32` (7 / 24 / 32 components), which cost ~2 s each to run.
+
+**The capacity experiment never tested its own premise.** Instance counts were
+{4, 8, 16}, all of which fit (2.01 / 1.50 / 1.25 GiB). `instances=1` — the 7.90 GiB
+configuration that does not fit an 8 GB card — was unreachable. The sweep cost **~2 days**
+and produced a scaling curve the other three data sets already gave. Replaced by a
+1-seed probe at instances {1,2,4} with the OOM fallback disabled.
+
+**bridges and budget are deterministic.** They set `brute_force_limit = n`, so every
+quality figure came back with a standard deviation of exactly 0.00000 across 5 seeds.
+Dropped to 2 seeds; extra seeds buy timing jitter only.
+
+**`refine_nodes_fraction` was exactly 0.25 on every data set and every batch** — the cap
+is always binding, so the measurement reflects the ceiling rather than the algorithm's
+natural appetite, and `refine_max_fraction` is not in the sensitivity sweep. Open.
+
 ## 9. Reference measurements
 
 Recorded so drift in the routine is detectable. Dev box: RTX 4070 Ti SUPER, CUDA 12.6.

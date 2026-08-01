@@ -56,7 +56,7 @@ std::unique_ptr<Backend> make_backend(const BackendOptions& opts, ThreadPool* cp
         if (ids.empty()) {
             for (int i = 0; i < cuda::device_count(); ++i) ids.push_back(i);
         }
-        if (!ids.empty()) return make_cuda_backend(ids);
+        if (!ids.empty()) return make_cuda_backend(ids, opts.oom_fallback);
     }
 #else
     (void)opts;
