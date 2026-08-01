@@ -5,7 +5,7 @@ baseline, and **why each of those choices was made**. Several of the decisions h
 arbitrary until you know what went wrong first, so the reasoning is recorded alongside the
 setup. When something changes in the routine, change it here too.
 
-Last updated: 2026-07-29.
+Last updated: 2026-08-01.
 
 ---
 
@@ -358,10 +358,30 @@ First full sweep. 14,878 rows, 5 seeds, 37 runs.
 Eight incremental batches cost 2.5–3x a *single* rebuild, i.e. ~3x cheaper than rebuilding
 per batch, at higher quality — the incremental path accumulates more total descent.
 
-**GPU strong scaling** (instance count fixed across device counts), speed-up on 4 GPUs at
-16 instances: gist1m **2.68x**, sift1m **2.53x**, manifold_mid **2.50x**, capacity10m
-**3.23x**. Mean parallel fraction f = 0.725, so the 4-GPU Amdahl ceiling is 2.19x — the
-larger data sets exceed it because f rises with instance size.
+**GPU strong scaling** (instance count fixed across device counts), 16 instances:
+
+| data set | f (1 GPU) | Amdahl ceiling @4 | measured @4 | efficiency |
+|---|---|---|---|---|
+| capacity10m (10M) | 0.941 | 3.40x | **3.23x** | 0.81 |
+| gist1m (100k) | 0.921 | 3.23x | **2.68x** | 0.67 |
+| sift1m (200k) | 0.869 | 2.87x | **2.53x** | 0.63 |
+| manifold_mid (100k) | 0.840 | 2.70x | **2.50x** | 0.63 |
+
+**Scaling improves with problem size** — f rises 0.840 → 0.941 and efficiency 0.63 → 0.81
+as n goes from 100k to 10M, because larger instances amortise the fixed per-job transfer.
+That trend is the strongest form of the scalability claim, and it is the reason the
+expensive capacity10m sweep was worth its cost after all.
+
+> **`f` must be measured on the serial baseline.** It *falls* as devices are added — the
+> instance phase is exactly the part being parallelised, so it shrinks — dropping from
+> 0.941 to 0.798 between 1 and 4 GPUs on capacity10m. Averaging f across device counts
+> understates the ceiling enough that every measurement appears to exceed it, which is
+> what an earlier version of this file reported. Take f from the 1-GPU run.
+
+**Per-device memory is exactly flat as devices are added** — 1275 MiB on 1, 2, 3 and 4
+GPUs for capacity10m — and falls with instance count (2.01 / 1.50 / 1.25 GiB at 4 / 8 / 16
+instances). That invariance is the property that makes the design scale, and it is now
+measured rather than asserted.
 
 **Budget: ambient is not a sublinear estimate.** It selects **100 % of n** on 20ng_pca500
 and gist1m, and 29–40 % everywhere else. Intrinsic uses 1.4–10 %, runs 5–30x faster, and
@@ -377,9 +397,12 @@ approximated. Claim C rested on a single data set. Fixed by adding `manifold_c8`
 
 **The capacity experiment never tested its own premise.** Instance counts were
 {4, 8, 16}, all of which fit (2.01 / 1.50 / 1.25 GiB). `instances=1` — the 7.90 GiB
-configuration that does not fit an 8 GB card — was unreachable. The sweep cost **~2 days**
-and produced a scaling curve the other three data sets already gave. Replaced by a
-1-seed probe at instances {1,2,4} with the OOM fallback disabled.
+configuration that does not fit an 8 GB card — was unreachable, so the capacity claim has
+no supporting measurement. Added a 1-seed probe at instances {1,2,4} with the OOM fallback
+disabled, which costs minutes rather than the ~2 days the full sweep took.
+
+(The sweep itself was *not* wasted, contrary to a first reading of the partial data: at
+10M points it produced both the best speed-up in the suite and the size trend above.)
 
 **bridges and budget are deterministic.** They set `brute_force_limit = n`, so every
 quality figure came back with a standard deviation of exactly 0.00000 across 5 seeds.
@@ -405,7 +428,7 @@ Recorded so drift in the routine is detectable. Dev box: RTX 4070 Ti SUPER, CUDA
 | Incremental final recall vs rebuild | 0.9985 vs 0.9854 |
 | Refinement set (capped) | 25 % of graph, recall 0.9996 |
 | Drift over 20 batches | **+0.026** (improves, then flat) |
-| Parallel fraction f | **0.79** → 4-GPU ceiling **2.45×** |
+| Parallel fraction f (1-GPU baseline) | 0.84-0.94 → 4-GPU ceiling 2.70-3.40x |
 | Intrinsic dim: SIFT / GIST / GloVe / 20NG | 10.2 / 28.5 / 34.5 / 36.3 |
 | Intrinsic budget saving | 5–49× fewer anti-hubs, identical quality on real data |
 | Capacity: 1 instance vs 4 | 7.90 GiB (OOM on 8 GB) vs 1.97 GiB |

@@ -249,6 +249,7 @@ int cmd_preflight(const Args& a) {
     const std::uint32_t fixed_instances =
         std::max<std::uint32_t>(4u, static_cast<std::uint32_t>(all.size()));
     double one_device_seconds = 0.0;
+    double one_device_f = 0.0;
     try {
         CoreSGParams p;
         p.k_max = k;
@@ -258,7 +259,11 @@ int cmd_preflight(const Args& a) {
         p.incr.min_base_for_split = 1000;
         p.incr.instance_nnd.k = k;
         CoreSG sg(p);
-        one_device_seconds = sg.build(raw.data(), n, dim).knn_seconds;
+        const CoreSGStats one = sg.build(raw.data(), n, dim);
+        one_device_seconds = one.knn_seconds;
+        const double ph = one.knn_stats.instance_seconds + one.knn_stats.merge_seconds +
+                          one.knn_stats.refine_seconds;
+        if (ph > 0.0) one_device_f = one.knn_stats.instance_seconds / ph;
     } catch (const std::exception& e) {
         check(false, "single-device reference run", e.what());
     }
@@ -292,9 +297,12 @@ int cmd_preflight(const Args& a) {
                   : "");
         if (one_device_seconds > 0.0 && devs.size() > 1) {
             const double ratio = one_device_seconds / std::max(st.knn_seconds, 1e-9);
-            const double phase = st.knn_stats.instance_seconds +
-                                 st.knn_stats.merge_seconds + st.knn_stats.refine_seconds;
-            const double f = phase > 0.0 ? st.knn_stats.instance_seconds / phase : 0.0;
+            // f must come from the SERIAL baseline. It falls as devices are
+            // added -- the instance phase is exactly the part being
+            // parallelised, so it shrinks -- and using the multi-device value
+            // understates the ceiling badly enough that real measurements
+            // appear to exceed it.
+            const double f = one_device_f;
             const double ceiling = 1.0 / ((1.0 - f) + f / double(devs.size()));
             std::printf("  [info] %u instances: %.3fs on 1 device -> %.3fs on %zu "
                         "= %.2fx (Amdahl ceiling %.2fx at f=%.2f)\n",
