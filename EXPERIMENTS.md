@@ -387,6 +387,40 @@ measured rather than asserted.
 and gist1m, and 29–40 % everywhere else. Intrinsic uses 1.4–10 %, runs 5–30x faster, and
 costs at most 0.6 % in MST weight (0.1 % at x4).
 
+### Claim C, after adding the fragmenting configurations
+
+Bridges are load-bearing only where the k-NN graph actually breaks apart. Five data sets
+now do:
+
+| data set | components (k-NN alone) | worst weight ratio | ARI | bridge speed-up |
+|---|---|---|---|---|
+| manifold_c32 | 32 | 1.00022 | 1.0000 | 18.2x |
+| manifold_c24 | 24 | 1.00024 | 1.0000 | 36.0x |
+| manifold_exact | 16 | 1.00000 | 1.0000 | 12.1x |
+| manifold_c8 | 8 | 1.00001 | 1.0000 | 19.0x |
+| sift1m | 2 | 1.00000 | 1.0000 | 10.5x |
+
+**Worst case across all five: weight ratio 1.00024, ARI exactly 1.0000, 10.5-36x faster
+than the exact MST.** The six remaining data sets have connected k-NN graphs and are
+reported separately as cost-only.
+
+At full scale `manifold_wide` fragments into **273** components and the anti-hub bridges
+alone reduce that to **1** — the per-component quota doing exactly what it was added for.
+Its incremental run also beats a rebuild (recall 0.9971 vs 0.9896, ARI 0.9946) and its
+drift over 25 batches is **-0.0034**, i.e. flat.
+
+### The budget on `20ng_tfidf` (d=1000), the extreme case
+
+| rule | effective d | selected | fraction of n | bridge time |
+|---|---|---|---|---|
+| ambient | 1000 | 4000 | **100 %** | 0.1245 s |
+| ambient_capped | 1000 | 2000 | 50 % | 0.0316 s |
+| **intrinsic** | **41.6** | 472 | 11.8 % | **0.0054 s** |
+| intrinsic_x4 | 41.6 | 1889 | 47 % | 0.0392 s |
+
+Ambient selects *every point*: the "approximation" is the exact MST. Intrinsic is **23x
+faster** and uses an eighth of the budget.
+
 ### What this run exposed
 
 **Only one data set exercised the bridges.** `components(knn_only)` was 1 on 20ng_pca500,

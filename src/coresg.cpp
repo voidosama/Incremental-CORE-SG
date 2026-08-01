@@ -211,6 +211,20 @@ void CoreSG::repair_connectivity(CoreSGStats* stats) {
 
     std::vector<idx_t> reps;
     for (const std::vector<idx_t>& b : buckets) reps.insert(reps.end(), b.begin(), b.end());
+
+    // `per` alone cannot bound this: with more components than max_reps it
+    // floors at 1 and the representative set grows to one node per component,
+    // which for a degenerate graph (say, one whose instances all failed to
+    // build) means millions of nodes fed to an O(m^2) MST. Cap it outright.
+    // Full coverage is not achievable within the budget in that case, and the
+    // component counts in the stats say so.
+    if (params_.max_reps && reps.size() > params_.max_reps) {
+        std::partial_sort(reps.begin(), reps.begin() + params_.max_reps, reps.end(),
+                          [&](idx_t a, idx_t b) {
+                              return hub_.reverse_score(a) < hub_.reverse_score(b);
+                          });
+        reps.resize(params_.max_reps);
+    }
     if (reps.size() < 2) {
         stats->repair_seconds = since(t0);
         return;

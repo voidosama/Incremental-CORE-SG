@@ -164,7 +164,8 @@ MATRIX = [
     # fallback disabled so a refused job is recorded in seconds instead of
     # turning into a multi-hour CPU descent over 10M points.
     ("scaling", ["capacity10m"],
-     dict(tag="oom", scaling_instances="1,2,4", seeds=1, no_oom_fallback=True)),
+     dict(tag="oom", scaling_instances="1,2", seeds=1, no_oom_fallback=True,
+          skip_cpu_scaling=True)),
 ]
 
 
@@ -260,6 +261,8 @@ def build_commands(args):
                 cmd += ["--scaling-instances", extra["scaling_instances"]]
             if extra.get("no_oom_fallback"):
                 cmd += ["--no-oom-fallback"]
+            if extra.get("skip_cpu_scaling"):
+                cmd += ["--skip-cpu-scaling"]
             if spec.get("limit"):
                 cmd += ["--limit", str(spec["limit"])]
             if extra.get("exact_limit"):

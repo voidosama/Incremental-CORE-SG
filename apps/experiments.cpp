@@ -124,6 +124,10 @@ struct Options {
     /// capacity probe: falling back means a 10M-point NN-Descent on the CPU,
     /// turning a two-second demonstration into hours. Disable it there.
     bool oom_fallback = true;
+    /// Skip the CPU thread sweep in `scaling`. It is unaffordable on a very
+    /// large data set -- 4.3 hours on 10M points before the GPU section even
+    /// starts -- and irrelevant when the run exists to probe device capacity.
+    bool skip_cpu_scaling = false;
 };
 
 std::vector<std::uint32_t> parse_uint_list(const std::string& s) {
@@ -650,28 +654,6 @@ void exp_scaling(const Options& o, const Data& d, Csv* csv) {
         return;
     }
 
-    // CPU thread scaling.
-    for (unsigned threads : {1u, 2u, 4u, 8u, 0u}) {
-        for (int s = 0; s < std::min(o.seeds, 3); ++s) {
-            const std::uint64_t seed = 4000 + s;
-            Options local = o;
-            local.gpu = false;
-            local.threads = threads;
-            CoreSGParams p = base_params(local, d, seed);
-            p.incr.instances = 4;
-            CoreSG sg(p);
-            const CoreSGStats bs = sg.build(d.values.data(), base, d.dim);
-            const CoreSGStats us = sg.insert(d.values.data() + base * d.dim, batch);
-            const std::string v = threads ? std::to_string(threads) : "all";
-            csv->row("scaling", d.name, d.n, d.dim, o.k, "cpu_threads", v, seed, -1,
-                     "build_seconds", bs.total_seconds);
-            csv->row("scaling", d.name, d.n, d.dim, o.k, "cpu_threads", v, seed, -1,
-                     "insert_seconds", us.total_seconds);
-            csv->row("scaling", d.name, d.n, d.dim, o.k, "cpu_threads", v, seed, -1,
-                     "instance_seconds", us.knn_stats.instance_seconds);
-        }
-    }
-
     const std::vector<DeviceInfo> devices = enumerate_cuda_devices();
     if (devices.empty()) {
         std::printf("  (no CUDA devices -- GPU rows omitted; rerun on the cluster)\n");
@@ -756,6 +738,34 @@ void exp_scaling(const Options& o, const Data& d, Csv* csv) {
             }
         }
     }
+    // CPU thread scaling runs LAST on purpose: the device measurements are the
+    // point of this experiment, and a run that gets cut short should still have
+    // produced them.
+    if (o.skip_cpu_scaling) {
+        std::printf("  (CPU thread sweep skipped)\n");
+        return;
+    }
+    for (unsigned threads : {1u, 2u, 4u, 8u, 0u}) {
+        for (int s = 0; s < std::min(o.seeds, 3); ++s) {
+            const std::uint64_t seed = 4000 + s;
+            Options local = o;
+            local.gpu = false;
+            local.threads = threads;
+            CoreSGParams p = base_params(local, d, seed);
+            p.incr.instances = 4;
+            CoreSG sg(p);
+            const CoreSGStats bs = sg.build(d.values.data(), base, d.dim);
+            const CoreSGStats us = sg.insert(d.values.data() + base * d.dim, batch);
+            const std::string v = threads ? std::to_string(threads) : "all";
+            csv->row("scaling", d.name, d.n, d.dim, o.k, "cpu_threads", v, seed, -1,
+                     "build_seconds", bs.total_seconds);
+            csv->row("scaling", d.name, d.n, d.dim, o.k, "cpu_threads", v, seed, -1,
+                     "insert_seconds", us.total_seconds);
+            csv->row("scaling", d.name, d.n, d.dim, o.k, "cpu_threads", v, seed, -1,
+                     "instance_seconds", us.knn_stats.instance_seconds);
+        }
+    }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -943,6 +953,7 @@ int main(int argc, char** argv) {
         else if (a == "--gpu") o.gpu = std::atoi(next().c_str()) != 0;
         else if (a == "--scaling-instances") o.scaling_instances = next();
         else if (a == "--no-oom-fallback") o.oom_fallback = false;
+        else if (a == "--skip-cpu-scaling") o.skip_cpu_scaling = true;
         else if (a == "--threads") o.threads = std::strtoul(next().c_str(), nullptr, 10);
         else if (a == "--out") o.out = next();
         else if (a == "--quiet") o.echo = false;
