@@ -58,9 +58,12 @@ Data formats: `.fvecs`, `.bvecs`, `.csv`, `.tsv`, raw `.bin` (with `--dim`).
 
 ## Evaluation
 
-The experiment suite — data sets, baselines, metrics, and the reasoning behind each
-choice, including the traps that produced wrong numbers before they were caught — is
-documented separately in **[EXPERIMENTS.md](EXPERIMENTS.md)**.
+**[RESULTS.md](RESULTS.md)** — the full analysis of the completed sweep: what each claim is
+supported by, what is *not* supported, insights, and future work.
+
+**[EXPERIMENTS.md](EXPERIMENTS.md)** — the suite design: data sets, baselines, metrics, and
+the reasoning behind each choice, including the traps that produced wrong numbers before
+they were caught.
 
 ```bash
 python scripts/run_suite.py --list
