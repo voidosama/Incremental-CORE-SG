@@ -1,0 +1,966 @@
+% ---------------------------------------------------------------------------
+% Incremental, Multi-GPU CORE-SG -- base draft.
+%
+% Compiles on Overleaf with pdfLaTeX + BibTeX. All figures are pgfplots/TikZ,
+% so there are no external image dependencies and every plot is editable in
+% place. Numbers come from results.csv (18,485 measurements, 4x RTX 2080 SUPER)
+% and results_local.csv (8,434, 1x RTX 4070 Ti SUPER); the provenance of each
+% is stated in Section V-A.
+%
+% TODO before submission -- search for "TODO" and for "\authorplaceholder".
+% ---------------------------------------------------------------------------
+\documentclass[lettersize,journal]{IEEEtran}
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
+\usepackage{textcomp}
+\usepackage{stfloats}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{cite}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds}
+
+\hyphenation{op-tical net-works semi-conduc-tor}
+
+\newcommand{\kmax}{k_{\max}}
+\newcommand{\mpts}{m_{\mathrm{pts}}}
+\newcommand{\mrd}{d_{\mathrm{mreach}}}
+\newcommand{\coredist}{d_{\mathrm{core}}}
+
+\begin{document}
+
+\title{Incremental, Multi-GPU Construction of the CORE-SG\\
+       for Density-Based Clustering at Scale}
+
+% ---------------------------------------------------------------------------
+% TODO: four authors. Replace names, affiliations and emails.
+% ---------------------------------------------------------------------------
+\author{First~A.~Author,~\IEEEmembership{Student~Member,~IEEE,}
+        Second~B.~Author,
+        Third~C.~Author,~\IEEEmembership{Member,~IEEE,}
+        and~Fourth~D.~Author,~\IEEEmembership{Senior~Member,~IEEE}
+\thanks{F. A. Author is with the Department of Computer Science,
+        \textit{TODO: Institution}, \textit{TODO: City, Country}
+        (e-mail: TODO@example.org).}
+\thanks{S. B. Author is with \textit{TODO: Institution}
+        (e-mail: TODO@example.org).}
+\thanks{T. C. Author is with \textit{TODO: Institution}
+        (e-mail: TODO@example.org).}
+\thanks{F. D. Author is with \textit{TODO: Institution}
+        (e-mail: TODO@example.org).}
+\thanks{Manuscript received TODO; revised TODO.}}
+
+\markboth{IEEE Transactions on TODO,~Vol.~XX, No.~X, TODO~2026}%
+{Author \MakeLowercase{\textit{et al.}}: Incremental, Multi-GPU Construction of the CORE-SG}
+
+\maketitle
+
+\begin{abstract}
+Density-based clustering methods such as HDBSCAN* depend on a smoothing
+parameter $\mpts$ whose correct value cannot be known in advance, so practitioners
+sweep it. The CORE-SG replacement graph removes the quadratic cost of that sweep
+by serving every $\mpts$ from a single graph, but it is a static, single-machine
+construction: new data forces a full rebuild, and its minimum spanning tree half
+costs $O(n^2 d)$ and does not fit on one accelerator at scale. We make the
+CORE-SG incremental and multi-GPU by treating its two halves separately. The
+$\kmax$-nearest-neighbour half is maintained by Dynamic NN-Descent decomposed
+into \emph{sampled instances}, self-contained subproblems that bound per-device
+memory and queue onto any accelerator. The spanning-tree half is replaced by an
+\emph{anti-hub bridge estimate}: because the only edges the neighbourhoods
+cannot supply are those bridging density-separated regions, and such bridges
+leave from region borders, a spanning tree over the $d\ln|E|$ lowest
+locally-normalised reverse-degree nodes suffices. The selected set is
+independent of $n$, which eliminates incremental spanning-tree maintenance
+entirely. Across 14 data sets and 18{,}485 measurements the estimate yields
+spanning trees at worst $0.024\%$ heavier than exact at DBSCAN* ARI exactly
+$1.0000$, while costing $10.5$--$36\times$ less; incremental construction beats
+a \emph{compute-matched} rebuild by up to $7.0$ points of recall; per-device
+memory is exactly invariant with device count; and the method matches or exceeds
+FISHDBC on every batch of every stream tested. We further report a finding with
+implications beyond this work: on every real data set examined the
+$\kmax$-nearest-neighbour graph is \emph{already connected} at the operating
+$\kmax$, which reframes the spanning-tree half from essential structure to
+insurance that is rarely claimed.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Density-based clustering, HDBSCAN*, minimum spanning tree, $k$-nearest-neighbour
+graph, incremental algorithms, GPU computing, hubness.
+\end{IEEEkeywords}
+
+% ===========================================================================
+\section{Introduction}
+% ===========================================================================
+\IEEEPARstart{D}{ensity-based} clustering does not operate on raw distances. It
+first reweights the space by a local density estimate, and that estimate is
+governed by a smoothing parameter, $\mpts$, that no principled procedure selects
+in advance. Because no single value is appropriate for data whose regions differ
+in density---which is most real data---practitioners sweep $\mpts$ and inspect
+the resulting hierarchies. The cost of that sweep is the practical barrier: the
+clustering for a given $\mpts$ is determined by a minimum spanning tree (MST) of
+a complete graph, and recomputing one per parameter value costs $O(n^2 d)$ each
+time.
+
+The CORE-SG replacement graph~\cite{coresg} removes that barrier. A single graph,
+built once, provably contains an MST of the complete mutual-reachability graph
+for \emph{every} $\mpts \le \kmax$. Extracting a clustering then means
+reweighting $O(n\kmax)$ edges and running an MST over them, rather than
+constructing a quadratic graph from scratch. The reported speed-ups are large and
+we reproduce them.
+
+Two properties of the original construction limit its reach, and both follow from
+the same source: it is static and single-machine. New data forces a full rebuild
+of both halves. And the MST half, taken over the complete mutual-reachability
+graph, is $O(n^2 d)$ in time and does not fit within one accelerator's memory at
+scale. Data that arrives over time---the common case in the applications
+density-based clustering serves---is therefore not supported at all.
+
+\subsection{Contributions}
+
+We make the CORE-SG incremental and multi-GPU. The central design decision is to
+treat its two halves as separate problems, because they fail for different
+reasons and admit different remedies.
+
+\begin{enumerate}
+\item \textbf{An incremental $k$-NN half built from sampled instances.} Dynamic
+      NN-Descent~\cite{dynamic_nndescent} refines a graph in place and is not
+      incremental. We decompose each update into self-contained subproblems, each
+      a random sample of the existing points merged with the whole arriving
+      batch. Each instance is warm-started, bounds device memory to
+      $|\text{sample}| + |\text{batch}|$ vectors, and queues onto any
+      accelerator without cross-device communication (Section~\ref{sec:knn}).
+
+\item \textbf{An anti-hub bridge estimate replacing the MST half.} The edges the
+      neighbourhoods cannot supply are precisely those bridging
+      density-separated regions, and such bridges leave from region borders. We
+      identify borders by \emph{local hubness}---a reverse degree normalised by
+      the reverse degrees of one's own neighbours, which makes the statistic
+      invariant to absolute density---and span only the $d\ln|E|$ lowest
+      scorers. The selected set is independent of $n$, so no spanning tree ever
+      requires repair on insertion (Section~\ref{sec:bridges}).
+
+\item \textbf{An evaluation designed against the object being approximated}
+      rather than against class labels, on 14 data sets and 18{,}485
+      measurements, including a compute-matched rebuild baseline and a
+      like-for-like comparison against FISHDBC~\cite{fishdbc}
+      (Sections~\ref{sec:setup}--\ref{sec:results}).
+
+\item \textbf{An empirical finding about real data.} On every real data set we
+      examined, the $k$-NN graph is already connected at the operating $\kmax$.
+      The MST half therefore contributes nothing to those data sets beyond what
+      the neighbourhoods already provide. We report the $\kmax$ at which each
+      data set connects and discuss what follows (Section~\ref{sec:connectivity}).
+\end{enumerate}
+
+% ===========================================================================
+\section{Background and Related Work}
+% ===========================================================================
+
+\subsection{Density-based clustering and $\mpts$}
+
+Given a data set $X \subset \mathbb{R}^d$ of $n$ points and a smoothing parameter
+$\mpts$, the \emph{core distance} of $x$ is the distance from $x$ to its
+$\mpts$-th nearest neighbour,
+\begin{equation}
+\coredist^{\mpts}(x) = d(x, \mathrm{NN}_{\mpts}(x)),
+\end{equation}
+which is small in dense regions and large in sparse ones. The
+\emph{mutual reachability distance}~\cite{hdbscan} is
+\begin{equation}
+\label{eq:mrd}
+\mrd^{\mpts}(x,y) = \max\!\left\{\coredist^{\mpts}(x),\;
+\coredist^{\mpts}(y),\; d(x,y)\right\},
+\end{equation}
+which inflates distances in sparse regions while leaving dense regions untouched,
+and thereby prevents single-linkage clustering from chaining through noise.
+
+The clustering itself is a spanning tree. Building the complete graph weighted by
+$\mrd^{\mpts}$ and taking its MST yields a tree whose sorted edge weights are
+exactly the merge heights of the single-linkage dendrogram; the HDBSCAN*
+hierarchy is that dendrogram, and cutting it at a threshold $\varepsilon$
+recovers the DBSCAN* clustering at $\varepsilon$~\cite{hdbscan_tkdd}, the
+noise-aware variant of~\cite{dbscan}. Flat
+clusterings are then extracted from the hierarchy by stability
+maximisation~\cite{fosc}. Everything downstream is thus determined by one object,
+$\mathrm{MST}_{\mpts}$, and by the parameter that defines it.
+
+\subsection{The CORE-SG}
+
+Neto et al.~\cite{coresg} observe that a single graph can serve every $\mpts$ at
+once. Define
+\begin{equation}
+\label{eq:coresg}
+\mathrm{CORE\text{-}SG}_{\kmax} = \kmax\text{-}\mathrm{NNG} \;\cup\;
+\mathrm{MST}_{\kmax},
+\end{equation}
+where $\mathrm{MST}_{\kmax}$ is the MST of the complete mutual-reachability graph
+at the largest $\mpts$ of interest. Their Theorem~1 establishes that for every
+$\mpts \le \kmax$, some MST of the complete $\mrd^{\mpts}$ graph is contained in
+\eqref{eq:coresg}. Extracting $\mathrm{MST}_{\mpts}$ therefore requires only
+reweighting the $O(n\kmax)$ stored edges with $\mrd^{\mpts}$ and running an MST
+over that list.
+
+The intuition, which motivates our replacement of the second half, follows from
+\eqref{eq:mrd}. An edge's weight falls into two cases. When $d(x,y)$ is small
+relative to the two core distances, the weight is determined by the core
+distances alone, and those are recoverable from the $k$-NN graph. The edges that
+carry information not already present are those where the true distance
+dominates: long edges bridging regions the neighbourhoods cannot reach.
+$\mathrm{MST}_{\kmax}$ exists to supply exactly those.
+
+\subsection{Approximate $k$-NN graph construction}
+
+NN-Descent~\cite{nndescent} builds an approximate $k$-NN graph from the principle
+that a neighbour of a neighbour is a likely neighbour, converging in a few rounds
+of local joins. Dynamic NN-Descent~\cite{dynamic_nndescent} samples directly on
+the live graph, bounds the reverse-neighbour cache, and removes the barrier
+inside a round, which makes it amenable to lock-free parallel execution. Neither
+is incremental in the sense required here: both refine a whole graph in place, so
+inserting a batch either leaves the new points without the neighbourhood
+structure the descent needs, or costs $O(n)$ per batch. Merging independently
+constructed $k$-NN graphs has been studied separately~\cite{knn_merge}; our merge
+step exploits the same idempotence of top-$k$ insertion.
+
+\subsection{Incremental and streaming density-based clustering}
+
+FISHDBC~\cite{fishdbc} is the closest published work: an incremental,
+approximate HDBSCAN* that maintains an MST fed by candidate edges from an
+HNSW index~\cite{hnsw}. It is the opposite design decision on the same problem---
+it maintains a spanning tree, we avoid maintaining one---which makes it the
+natural baseline. It approximates HDBSCAN* for a \emph{single} $\mpts$; the
+multiple-$\mpts$ capability that CORE-SG exists to provide has no equivalent
+there. I-HASTREAM~\cite{ihastream} maintains a hierarchy over micro-clusters, a
+different granularity, as do summarisation approaches such as Data
+Bubbles~\cite{databubbles} and BIRCH-derived methods~\cite{birch}. Distributed
+batch constructions~\cite{mrhdbscan} address scale but not incrementality.
+General dynamic MST maintenance~\cite{mst_dynamic_survey,mst_maintenance} is
+well studied; we discuss in Section~\ref{sec:bridges} why we avoid it rather than
+adopt it.
+
+\subsection{Hubness}
+
+The asymmetry of the $k$-NN relation in high dimensions---some points appear in
+many neighbour lists, others in few---is a well-documented
+phenomenon~\cite{hubs}, usually studied as a problem. We use it constructively:
+the \emph{low} end of the reverse-degree distribution, normalised locally,
+identifies region borders, which is where the edges we need originate.
+
+% ===========================================================================
+\section{Method}
+\label{sec:method}
+% ===========================================================================
+
+Fig.~\ref{fig:pipeline} shows the pipeline. A batch of arriving points passes
+through three stages: the $k$-NN half is updated by sampled-instance descent, the
+hubness index is refreshed incrementally and re-selects anti-hubs, and the bridge
+spanning tree is recomputed over that small set. A query for $\mathrm{MST}_{\mpts}$
+then reweights the union and runs a spanning-tree algorithm over $O(n\kmax)$
+edges.
+
+\begin{figure}[!t]
+\centering
+\begin{tikzpicture}[
+  node distance=3.6mm,
+  box/.style={draw, rounded corners=1pt, align=center, font=\scriptsize,
+              minimum height=6.5mm, inner xsep=2pt, text width=20mm},
+  wide/.style={box, text width=64mm},
+  ar/.style={-{Latex[length=1.4mm]}, thin}
+]
+\node[wide, fill=black!5] (batch) {arriving batch $B$};
+\node[box, below=of batch.south west, anchor=north west] (i1) {instance 1\\{\tiny sample $\cup$ $B$}};
+\node[box, right=2mm of i1] (i2) {instance 2\\{\tiny sample $\cup$ $B$}};
+\node[box, right=2mm of i2] (i3) {instance $m$\\{\tiny sample $\cup$ $B$}};
+\node[wide, below=of i2] (merge) {merge into global top-$k$ lists};
+\node[wide, below=of merge] (refine) {restricted NN-Descent (new points $+$ rings)};
+\node[wide, below=of refine, fill=black!5] (knn) {$\kmax$-NN graph};
+\node[wide, below=of knn] (hub) {hubness index: $O(1)$ reverse-degree updates,\\rescore dirty region, select $d\ln|E|$ anti-hubs};
+\node[wide, below=of hub] (br) {bridge MST over the selected set $+$ repair};
+\node[wide, below=of br, fill=black!5] (sg) {CORE-SG $=$ $k$-NNG $\cup$ bridges};
+\node[wide, below=of sg] (out) {$\mathrm{MST}_{\mpts}$ for any $\mpts \le \kmax$\\{\tiny reweight with $\mrd^{\mpts}$, then MST}};
+
+\draw[ar] (batch.south) -- ++(0,-1.2mm) -| (i1.north);
+\draw[ar] (batch.south) -- ++(0,-1.2mm) -| (i2.north);
+\draw[ar] (batch.south) -- ++(0,-1.2mm) -| (i3.north);
+\draw[ar] (i1.south) |- ([yshift=1.2mm]merge.north) ;
+\draw[ar] (i2.south) -- (merge.north);
+\draw[ar] (i3.south) |- ([yshift=1.2mm]merge.north);
+\draw[ar] (merge) -- (refine);
+\draw[ar] (refine) -- (knn);
+\draw[ar] (knn) -- (hub);
+\draw[ar] (hub) -- (br);
+\draw[ar] (br) -- (sg);
+\draw[ar] (knn.east) -- ++(3mm,0) |- (sg.east);
+\draw[ar] (sg) -- (out);
+\node[font=\tiny, right=1mm of i3, text width=0mm] {};
+\end{tikzpicture}
+\caption{The update pipeline. Instances are independent subproblems and are the
+unit of parallelism; only the merge and the bridge spanning tree are global, and
+both operate on objects far smaller than the data set.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{The $k$-NN half: sampled instances}
+\label{sec:knn}
+
+An \emph{instance} is a random sample of the existing base points unioned with
+the entire arriving batch, together with the edges those sampled points already
+possess. Each instance is a self-contained NN-Descent problem with no reference
+to global state, and that single property yields three consequences.
+
+First, it is warm-started: sampled base points arrive with real neighbourhoods,
+so an instance converges in far fewer rounds than a cold build. Second, it bounds
+device memory to $|\text{sample}| + |\text{batch}|$ vectors rather than the whole
+data set, which is what makes data sets larger than one accelerator tractable.
+Third, instances never communicate, so they queue onto whatever device is free;
+\emph{the instance count, not the device count, is the unit of parallelism}, a
+claim we verify directly in Section~\ref{sec:scaling}.
+
+After the instances complete, their neighbourhoods are merged into the global
+graph by repeated insertion into sorted top-$k$ lists. This operation is
+commutative, associative and idempotent, so instances may finish in any order.
+A final NN-Descent restricted to the new points and their neighbourhood rings
+repairs edges the sampling missed.
+
+The refinement set is built as new points, then their neighbours, then their
+neighbours' neighbours, and is capped: unbounded it reaches $\Theta(k^2)$ nodes
+per new point. The cap truncates the outermost ring first and never discards a
+new point. We characterise its effect in Section~\ref{sec:sensitivity} and
+report an open question about its form.
+
+\subsection{The MST half: anti-hub bridges}
+\label{sec:bridges}
+
+Maintaining an MST under insertion is possible~\cite{mst_maintenance} but
+carries substantial machinery, and---critically---the tree being maintained here
+is over a \emph{complete} graph whose $O(n^2)$ edge weights all shift when
+$\mpts$ changes. We therefore do not maintain it. We estimate it.
+
+Recall from \eqref{eq:mrd} that the MST half need only supply edges bridging
+density-separated regions. Such a bridge leaves a region from its \emph{border},
+since an interior point always has a nearer neighbour in the direction of travel.
+Identifying borders geometrically is awkward beyond low dimensions; local hubness
+identifies them directly. Define
+\begin{align}
+\mathrm{rd}(v)    &= |\{u : v \in \mathrm{NN}(u)\}|, \\
+\label{eq:score}
+\mathrm{score}(v) &= \frac{\mathrm{rd}(v)}
+                          {\frac{1}{|\mathrm{NN}(v)|}\sum_{u \in \mathrm{NN}(v)} \mathrm{rd}(u)}.
+\end{align}
+An interior point sits inside many of its neighbours' neighbourhoods; a border
+point sits inside few, because its neighbours' lists point back into the region.
+The denominator is what makes \eqref{eq:score} usable: comparing $\mathrm{rd}(v)$
+against the global population would merely find sparse regions, whereas comparing
+it against $v$'s own neighbourhood makes the score \emph{invariant to local
+density}. A border point of a dense region scores like a border point of a sparse
+one, which is required when the data mixes densities. Values below 1 indicate a
+local anti-hub.
+
+The estimate is then: select the $d\ln|E|$ lowest scorers and compute an exact
+MST over that set in mutual-reachability space. Its edges become the bridges,
+stored with their base distance so that the reweighting for a query $\mpts$
+treats them identically to $k$-NN edges.
+
+The size of the selected set depends on $d$ and $\ln|E|$, \emph{not on $n$}.
+Consequently the bridge computation is $O(m^2 d)$ with $m \ll n$, and---the
+property that matters most---\textbf{no spanning tree ever requires repair when
+points arrive}. There is no incremental-MST problem to solve; there is only a
+small set to re-select. This is the trade the whole design rests on.
+
+The hubness index attaches to the $k$-NN graph as an observer, so every inserted
+or evicted directed edge updates a reverse degree in $O(1)$ and marks the
+affected nodes. A refresh rescores only the dirty region: nodes whose own degree
+moved, and the \emph{reverse} neighbours of those nodes, since $\mathrm{score}(v)$
+depends on $\mathrm{rd}(u)$ for $u \in \mathrm{NN}(v)$.
+
+\subsubsection*{Two corrections the bare rule requires}
+
+The budget $d\ln|E|$ depends only on $d$ and $|E|$ and is therefore blind to how
+many density-separated regions exist. Once the region count approaches it, some
+regions receive no representative and no bridge can leave them; we measured 120
+clusters at $d=8$ fragmenting into 41 pieces. A \emph{per-component quota}
+guarantees that every $k$-NN component contributes at least a fixed number of its
+own lowest scorers. This also closes a hole no score ranking can: in a small
+uniform detached region every node is exactly neutral, so no score-ranked budget
+reaches it however detached it is.
+
+Second, an estimate can still leave the graph disconnected, which yields a forest
+rather than a spanning tree and breaks every downstream density-based method. A
+repair step spans any remaining components using representatives drawn from each
+component's lowest scorers; contracting a connected spanning subgraph stays
+connected, so retaining only the inter-component edges of the representative MST
+suffices.
+
+% ===========================================================================
+\section{Experimental Setup}
+\label{sec:setup}
+% ===========================================================================
+
+\subsection{Ground truth: the exact CORE-SG, never class labels}
+
+Every quality claim is measured against the \emph{exact} CORE-SG---an exact
+$k$-NN half by brute force plus an exact $\mathrm{MST}_{\kmax}$---and never
+against human class labels. The claim under test is that an approximation matches
+the object it approximates. Scoring against class labels would instead measure
+whether HDBSCAN* suits a given data set, which is a different question with a
+different answer, and one this work makes no claim about.
+
+\subsection{Metrics}
+
+We report $k$-NN recall; MST total weight ratio (approximate over exact); the
+largest gap between the two sorted weight profiles, which is dendrogram
+similarity in computable form since single-linkage merge heights \emph{are} the
+sorted MST weights; DBSCAN* ARI~\cite{ari} between the flat clusterings cut from
+both trees at a common threshold; the component count of the $k$-NN half before
+any repair; and wall-clock split by phase.
+
+We deliberately do \emph{not} report edge overlap between spanning trees. All
+MSTs of a graph share a weight multiset, and for any threshold the components of
+the sub-threshold edge set depend on the graph rather than on which MST was
+extracted, so two different MSTs induce identical single-linkage hierarchies.
+Measured on our system, overlap collapses from $0.99$ to $0.19$ as $\mpts$ rises
+from 1 to 32 while ARI remains exactly $1.0000$: raising $\mpts$ flattens the
+mutual-reachability landscape into plateaus of tied weights, and any tie-break
+yields a different but equally optimal tree. Overlap measures tie-breaking, not
+quality.
+
+\subsection{Data sets}
+
+Table~\ref{tab:datasets} lists the three families. \textbf{Real-paper} sets
+reproduce the recipes of~\cite{coresg} for comparability, using
+FMA~\cite{fma} and 20 Newsgroups~\cite{newsgroups}. \textbf{Real-scale} sets
+exercise scale, high dimensionality and a non-Euclidean metric:
+SIFT1M and GIST1M~\cite{sift_gist}, and GloVe~\cite{glove} under cosine
+distance.
+\textbf{Manifold} sets are synthetic: generated in a low dimensionality and
+rotated into a high one by a random orthonormal map, which preserves every
+pairwise distance exactly, so cluster structure and separation are untouched
+while ambient dimensionality rises and intrinsic dimensionality is known by
+construction.
+
+The manifold family exists because of a finding we report in
+Section~\ref{sec:connectivity}: no real data set we examined produces a
+fragmented $k$-NN graph, so none of them can exercise the bridges at all.
+
+\begin{table}[!t]
+\caption{Data sets. Components are of the $k$-NN half alone at the operating
+$\kmax$, measured (Section~\ref{sec:connectivity}).}
+\label{tab:datasets}
+\centering
+\footnotesize
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+family & set & $n$ & $d$ & $\kmax$ & comp. \\
+\midrule
+real-paper & \texttt{fma\_chroma}   & 106\,574 & 84   & 32 & 1 \\
+           & \texttt{fma\_mfcc}     & 106\,574 & 140  & 32 & 1 \\
+           & \texttt{20ng\_tfidf}   & 10\,969  & 1000 & 24 & 1 \\
+           & \texttt{20ng\_pca500}  & 10\,969  & 500  & 24 & 1 \\
+\midrule
+real-scale & \texttt{sift1m}        & 200\,000 & 128  & 32 & 1 \\
+           & \texttt{gist1m}        & 100\,000 & 960  & 32 & 1 \\
+           & \texttt{glove100}      & 200\,000 & 100  & 32 & 1 \\
+\midrule
+manifold   & \texttt{manifold\_exact} & 4\,000   & 128 & 24 & 16 \\
+           & \texttt{manifold\_c8}    & 4\,000   & 128 & 24 & 8  \\
+           & \texttt{manifold\_c24}   & 4\,000   & 64  & 24 & 24 \\
+           & \texttt{manifold\_c32}   & 4\,000   & 128 & 16 & 32 \\
+           & \texttt{manifold\_mid}   & 100\,000 & 128 & 24 & 132 \\
+           & \texttt{manifold\_wide}  & 100\,000 & 256 & 24 & 271 \\
+\midrule
+capacity   & \texttt{capacity10m}   & 10\,000\,000 & 32 & 64 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Baselines and hardware}
+
+The primary baseline is \textbf{full recompute}: rebuilding from scratch at each
+batch. Because the incremental path revisits sampled base points once per batch,
+a plain rebuild is a \emph{cheaper} baseline rather than an equal one, so we also
+sweep the rebuild's descent effort and report the resulting cost/quality frontier
+(Section~\ref{sec:incremental}). The external baseline is
+FISHDBC~\cite{fishdbc}.
+
+Measurements were taken on a cluster of 4$\times$RTX 2080 SUPER (sm\_75, 8\,GB,
+CUDA 12.9) unless stated otherwise; a subset was taken on a single RTX 4070 Ti
+SUPER and is labelled as such. Quality figures---component counts, recall, ARI,
+and ratios of same-machine timings---are hardware-independent; absolute
+wall-clock figures are not, and are never pooled across machines.
+
+% ===========================================================================
+\section{Results}
+\label{sec:results}
+% ===========================================================================
+
+\subsection{Provenance}
+\label{sec:provenance}
+All figures below derive from 18{,}485 cluster measurements and 8{,}434
+single-GPU measurements, over up to 5 seeds, with zero failed runs. Every
+experiment uses multiple seeds because NN-Descent is randomised and its reverse
+cache is deliberately race-tolerant; single-run numbers would not be defensible.
+Experiments holding the $k$-NN half exact are deterministic and use 2 seeds,
+which we verified by observing a standard deviation of exactly zero across 5.
+
+\subsection{Anti-hub bridges match the exact spanning tree}
+\label{sec:bridgeresults}
+
+Bridges can only be evaluated where the $k$-NN graph actually fragments.
+Table~\ref{tab:bridges} restricts to the data sets that do, with the $k$-NN half
+held exact on both arms so that the bridge estimate is the only variable.
+
+\begin{table}[!t]
+\caption{Anti-hub bridges against the exact $\mathrm{MST}_{\kmax}$. Both arms
+share an exact $k$-NN half.}
+\label{tab:bridges}
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+data set & comp. & weight ratio & ARI & speed-up \\
+\midrule
+\texttt{manifold\_c32}  & 32 & 1.00022 & 1.0000 & 18.2$\times$ \\
+\texttt{manifold\_c24}  & 24 & 1.00024 & 1.0000 & 36.0$\times$ \\
+\texttt{manifold\_exact}& 16 & 1.00000 & 1.0000 & 12.1$\times$ \\
+\texttt{manifold\_c8}   & 8  & 1.00001 & 1.0000 & 19.0$\times$ \\
+\texttt{sift1m}         & 2  & 1.00000 & 1.0000 & 10.5$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The worst case anywhere is a spanning tree $0.024\%$ heavier than optimal, at
+DBSCAN* ARI exactly $1.0000$, for $10.5$--$36\times$ less work. At full scale
+\texttt{manifold\_wide} fragments into 271 components and the bridges alone
+reduce that to one.
+
+\subsection{Real \emph{k}-NN graphs are already connected}
+\label{sec:connectivity}
+
+Fig.~\ref{fig:components} reports the component count of the $k$-NN half alone as
+a function of $\kmax$. \textbf{Every real data set connects at $\kmax \le 24$},
+and the operating range of this work and of~\cite{coresg} is 24--32. The
+synthetic manifold sets connect at no $\kmax$ in the range, which is precisely
+why they exist.
+
+\begin{figure}[!t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=5.4cm,
+  xlabel={$\kmax$}, ylabel={components of the $k$-NN half},
+  ymode=log, log basis y=10,
+  xmode=log, log basis x=2, xtick={4,8,16,24,32,48,64},
+  xticklabels={4,8,16,24,32,48,64},
+  ymin=0.7, ymax=4000,
+  grid=both, grid style={black!12},
+  legend style={font=\tiny, at={(0.98,0.98)}, anchor=north east,
+                legend columns=2, /tikz/every even column/.append style={column sep=2mm}},
+  label style={font=\footnotesize}, tick label style={font=\footnotesize},
+  every axis plot/.append style={thick, mark size=1.2pt}
+]
+\addplot[mark=*, black] coordinates {(4,2636)(8,233)(16,267)(24,271)(32,257)(48,266)(64,277)};
+\addlegendentry{\texttt{manifold\_wide}}
+\addplot[mark=square*, black, dashed] coordinates {(4,1658)(8,107)(16,121)(24,132)(32,129)(48,127)(64,134)};
+\addlegendentry{\texttt{manifold\_mid}}
+\addplot[mark=triangle*, black!55] coordinates {(4,32)(8,28)(16,28)(24,28)(32,27)(48,24)(64,24)};
+\addlegendentry{\texttt{manifold\_c24}}
+\addplot[mark=o, black!45, dashed] coordinates {(4,5)(8,5)(16,2)(24,1)(32,1)(48,1)(64,1)};
+\addlegendentry{\texttt{gist1m}}
+\addplot[mark=diamond*, black!45] coordinates {(4,6)(8,4)(16,1)(24,1)(32,1)(48,1)(64,1)};
+\addlegendentry{\texttt{fma\_mfcc}}
+\addplot[mark=x, black!45, dashed] coordinates {(4,5)(8,1)(16,1)(24,1)(32,1)(48,1)(64,1)};
+\addlegendentry{\texttt{sift1m}}
+\addplot[mark=+, black!45] coordinates {(4,2)(8,1)(16,1)(24,1)(32,1)(48,1)(64,1)};
+\addlegendentry{\texttt{glove100}}
+\addplot[mark=asterisk, black!45, dotted] coordinates {(4,1)(8,1)(16,1)(24,1)(32,1)(48,1)(64,1)};
+\addlegendentry{\texttt{20ng\_tfidf}}
+\draw[gray, dashed] (axis cs:24,0.7) -- (axis cs:24,4000);
+\node[font=\tiny, gray, anchor=south west] at (axis cs:24,1200) {operating range};
+\end{axis}
+\end{tikzpicture}
+\caption{Components of the $k$-NN half alone, full $n$, mean of 3 seeds. Every
+real data set reaches a single component at $\kmax \le 24$; the synthetic
+manifold sets never do. Ambient dimensionality does not explain the threshold:
+\texttt{20ng\_tfidf} ($d=1000$) connects at $\kmax=4$ while \texttt{gist1m}
+($d=960$) requires $\kmax=24$.}
+\label{fig:components}
+\end{figure}
+
+Three observations follow, and we regard the first as the most transferable
+result in this paper.
+
+\textbf{The MST half is insurance, and on real data it is rarely claimed.} If the
+$k$-NN graph is already connected, the spanning-tree half contributes nothing
+beyond what the neighbourhoods provide. This reframes the second half of
+\eqref{eq:coresg} from essential structure to a guard against fragmentation, and
+it explains why an approximation as crude as ours suffices: on most real data the
+object being approximated is nearly empty. It also suggests a cheap gate. Deriving
+the component labelling costs $0.08$--$3.5$\,ms across our data sets, against
+$5.3$--$222$\,ms of hubness and bridge work---a $48$--$136\times$ ratio---so
+testing connectivity first and skipping the bridge computation when it holds is
+close to free.
+
+\textbf{Ambient dimensionality does not predict the threshold.} \texttt{20ng\_tfidf}
+at $d=1000$ connects at $\kmax=4$; \texttt{gist1m} at $d=960$ requires
+$\kmax=24$. What distinguishes them is whether the data contains genuinely
+density-separated regions each holding many points---a property our synthetic
+family has by construction and real data, at these scales, largely lacks.
+
+\textbf{Approximating the $k$-NN half does not hide fragmentation.} Every
+fragmenting count reported in the literature and here is measured with an exact
+half, so it is reasonable to ask whether NN-Descent's residual errors are long
+cross-region edges that quietly connect a graph the exact $k$-NN leaves in
+pieces. At the operating $\kmax$ they are not: on \texttt{manifold\_c24} the
+exact half yields 24 components and the approximate half 24--28, since a missed
+neighbour removes an edge while a substituted one stays local. The effect does
+reverse once $\kmax$ approaches the region size ($\texttt{manifold\_c32}$ at
+$\kmax{=}64$: 30 approximate against 32 exact), so we state the claim narrowly.
+
+\subsection{Incremental construction beats a compute-matched rebuild}
+\label{sec:incremental}
+
+Building on half the data and inserting the rest in eight batches, the
+incremental graph has higher $k$-NN recall than a rebuild on the same final data
+for all eight data sets tested, by 0.7 to 14 points. That comparison is not
+equal-work: the incremental path revisits sampled base points once per batch, so
+after eight batches the base has been refined eight times while the rebuild
+descends once.
+
+Fig.~\ref{fig:frontier} therefore sweeps the rebuild's descent effort and places
+the incremental result against the resulting frontier.
+
+\begin{figure}[!t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=5.2cm,
+  xlabel={build time (s)}, ylabel={$k$-NN recall},
+  grid=both, grid style={black!12},
+  legend style={font=\tiny, at={(0.98,0.03)}, anchor=south east},
+  label style={font=\footnotesize}, tick label style={font=\footnotesize},
+  xmin=1.8, xmax=13
+]
+% gist1m rebuild frontier
+\addplot[only marks, mark=o, black] coordinates {(4.77,0.88852)(3.55,0.90452)(3.45,0.90457)(4.09,0.93871)(4.20,0.94190)};
+\addlegendentry{\texttt{gist1m}, tuned rebuilds}
+\addplot[only marks, mark=*, black, mark size=2.4pt] coordinates {(11.90,0.97723)};
+\addlegendentry{\texttt{gist1m}, incremental}
+% glove100
+\addplot[only marks, mark=square, black!55] coordinates {(2.46,0.77413)(2.66,0.79043)(2.65,0.79032)(2.89,0.82866)(3.04,0.83441)};
+\addlegendentry{\texttt{glove100}, tuned rebuilds}
+\addplot[only marks, mark=square*, black!55, mark size=2.4pt] coordinates {(9.57,0.90451)};
+\addlegendentry{\texttt{glove100}, incremental}
+\draw[->, gray, thin] (axis cs:4.20,0.94190) -- (axis cs:11.5,0.97723);
+\draw[->, gray, thin] (axis cs:3.04,0.83441) -- (axis cs:9.2,0.90451);
+\node[font=\tiny, gray, anchor=south] at (axis cs:8.0,0.955) {$+3.5$ pts};
+\node[font=\tiny, gray, anchor=south] at (axis cs:6.2,0.868) {$+7.0$ pts};
+\end{axis}
+\end{tikzpicture}
+\caption{The equal-work control. Open markers are rebuilds given progressively
+more descent effort; filled markers are the incremental result. A margin of
+$3.5$ and $7.0$ points of recall survives against the best tuned rebuild.
+Single RTX 4070 Ti SUPER; recall is hardware-independent.}
+\label{fig:frontier}
+\end{figure}
+
+Two conclusions follow. First, \textbf{the two effort knobs are not
+interchangeable}: doubling and quadrupling the number of descent rounds returns
+\emph{bit-identical} distance-evaluation counts (222.5\,M on \texttt{gist1m}),
+because the early-stopping criterion fires at the same round either way. A single
+descent is not short of time; it has reached a fixed point of the local join.
+Widening the candidate list does help, because it changes which pairs are
+compared at all. The quality ceiling of a single build is set by the
+\emph{breadth} of the local join, not by how long it runs.
+
+Second, tuning recovers 5.3 of the original 8.9 points on \texttt{gist1m} and 6.0
+of 13.0 on \texttt{glove100}, leaving 3.5 and 7.0. The defensible claim is
+therefore sharper than the raw margin: \textbf{incremental construction beats a
+compute-matched rebuild on data where a single descent struggles, and the margin
+grows with the difficulty of the $k$-NN problem} ($+0.09$ on
+\texttt{manifold\_mid}, $+3.5$ on \texttt{gist1m}, $+7.0$ on \texttt{glove100}).
+The mechanism is the decomposition rather than the extra work: overlapping
+sampled instances explore a different part of the search space than one global
+descent reaches.
+
+\subsection{Amortisation and batch size}
+\label{sec:batchsize}
+
+Fig.~\ref{fig:batch} sweeps batch size against per-point cost.
+
+\begin{figure}[!t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=5.0cm,
+  xlabel={batch size (fraction of $n$)}, ylabel={seconds per inserted point},
+  xmode=log, ymode=log,
+  grid=both, grid style={black!12},
+  legend style={font=\tiny, at={(0.98,0.98)}, anchor=north east},
+  label style={font=\footnotesize}, tick label style={font=\footnotesize},
+  every axis plot/.append style={thick, mark size=1.3pt}
+]
+\addplot[mark=*, black] coordinates {(0.001,0.003900)(0.005,0.000935)(0.010,0.000527)(0.050,0.000132)(0.100,0.000071)(0.250,0.000037)};
+\addlegendentry{\texttt{fma\_mfcc}}
+\addplot[mark=square*, black!60, dashed] coordinates {(0.001,0.003719)(0.005,0.000905)(0.010,0.000504)(0.050,0.000128)(0.100,0.000072)(0.250,0.000035)};
+\addlegendentry{\texttt{sift1m}}
+\addplot[mark=triangle*, black!40] coordinates {(0.001,0.003441)(0.005,0.000879)(0.010,0.000506)(0.050,0.000127)(0.100,0.000071)(0.250,0.000037)};
+\addlegendentry{\texttt{manifold\_mid}}
+\end{axis}
+\end{tikzpicture}
+\caption{Per-point update cost against batch size, $n = 50\,000$, 3 seeds,
+cluster hardware. The fixed per-update phases---hubness refresh, bridge spanning
+tree, connectivity---rise from $8.6$--$8.9\%$ of update time at a $25\%$ batch to
+$24.6$--$28.1\%$ at a $0.1\%$ batch.}
+\label{fig:batch}
+\end{figure}
+
+The practically important point is the crossover. \textbf{At a $25\%$ batch an
+incremental update costs $0.97$--$1.24\times$ a full rebuild and produces a
+strictly better graph on all four data sets tested}, by 0.4 to 5.9 points of
+recall. This is a stronger statement of the incremental claim than a comparison
+against repeated rebuilding, because it needs no argument about the right
+baseline: for the price of one rebuild the result is better. Below that batch
+size the curve prices freshness, at roughly $100\times$ per point at a $0.1\%$
+batch for at most 0.25 points of recall.
+
+\subsection{Multi-GPU scaling and memory}
+\label{sec:scaling}
+
+Table~\ref{tab:scaling} reports strong scaling with the instance count held fixed
+across device counts, which is required for the measurement to be a scaling
+result rather than a change of workload.
+
+\begin{table}[!t]
+\caption{Strong scaling, instance count fixed at 16. $f$ is measured on the
+serial run; it falls as devices are added because the instance phase is exactly
+the part being parallelised.}
+\label{tab:scaling}
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+data set & $n$ & $f$ (1 GPU) & ceiling @4 & measured @4 \\
+\midrule
+\texttt{capacity10m}  & 10\,M   & 0.941 & 3.40$\times$ & \textbf{3.23}$\times$ \\
+\texttt{gist1m}       & 100\,k  & 0.921 & 3.23$\times$ & \textbf{2.68}$\times$ \\
+\texttt{sift1m}       & 200\,k  & 0.869 & 2.87$\times$ & \textbf{2.53}$\times$ \\
+\texttt{manifold\_mid}& 100\,k  & 0.840 & 2.70$\times$ & \textbf{2.50}$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Every measurement sits below its Amdahl ceiling~\cite{amdahl}, and efficiency
+rises with problem size ($0.63 \to 0.81$ as $n$ goes from $10^5$ to $10^7$)
+because larger instances amortise the fixed per-job transfer.
+
+Two further results characterise the design more sharply than a speed-up curve.
+\textbf{Parallelism is bounded by the decomposition, not the hardware}: with a
+single instance, four GPUs deliver $0.99\times$---nothing---while with two the
+speed-up appears at two devices and plateaus exactly where instances run out.
+\textbf{Per-device memory is exactly invariant with device count} and controlled
+entirely by the instance count (Fig.~\ref{fig:memory}). The response to a data
+set that does not fit is therefore to re-partition on the same hardware, not to
+add devices or memory---a property a design can fail to have, and the substance
+of the capacity argument. At $\kmax{=}128$ one instance over $10^7$ points
+requires $8.29$\,GiB and an 8\,GB device refuses it, matching the prediction of
+our sizing model exactly.
+
+\begin{figure}[!t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=4.4cm,
+  xlabel={number of GPUs}, ylabel={per-device resident (GiB)},
+  xtick={1,2,3,4}, ymin=0, ymax=5.6,
+  grid=both, grid style={black!12},
+  legend style={font=\tiny, at={(0.98,0.98)}, anchor=north east, legend columns=2},
+  label style={font=\footnotesize}, tick label style={font=\footnotesize},
+  every axis plot/.append style={thick, mark size=1.3pt}
+]
+\addplot[mark=*, black] coordinates {(1,4.936)(2,4.936)(3,4.936)(4,4.936)};
+\addlegendentry{1 instance}
+\addplot[mark=square*, black!70] coordinates {(1,3.010)(2,3.010)(3,3.010)(4,3.010)};
+\addlegendentry{2 instances}
+\addplot[mark=triangle*, black!55] coordinates {(1,2.011)(2,2.011)(3,2.011)(4,2.011)};
+\addlegendentry{4 instances}
+\addplot[mark=diamond*, black!40] coordinates {(1,1.502)(2,1.502)(3,1.502)(4,1.502)};
+\addlegendentry{8 instances}
+\addplot[mark=o, black!30] coordinates {(1,1.246)(2,1.246)(3,1.246)(4,1.246)};
+\addlegendentry{16 instances}
+\end{axis}
+\end{tikzpicture}
+\caption{Per-device memory on \texttt{capacity10m} ($10^7$ points). Exactly flat
+across device count, and set entirely by the instance count. Measured to the
+byte, not modelled.}
+\label{fig:memory}
+\end{figure}
+
+\subsection{Comparison with FISHDBC}
+\label{sec:fishdbc}
+
+A like-for-like comparison requires care. FISHDBC extracts an HDBSCAN* clustering
+whereas our experiments elsewhere cut a DBSCAN* clustering from the spanning
+tree, and the two were originally scored against different references. We
+therefore drive both methods over one arrival order, export our spanning tree per
+batch, and convert it to HDBSCAN* labels using the same condensed-tree extraction
+FISHDBC itself calls, scoring both against one reference---exact HDBSCAN*
+recomputed on the points present at that batch. The only quantity that differs
+between the two rows is the spanning tree each method produced.
+
+\begin{table}[!t]
+\caption{ARI against exact HDBSCAN* on the points present at each batch. 20\,000
+points, 8 batches, $\mpts{=}10$, 2 seeds.}
+\label{tab:fishdbc}
+\centering
+\footnotesize
+\begin{tabular}{@{}lccc@{}}
+\toprule
+data set & this work & FISHDBC & margin \\
+\midrule
+\texttt{manifold\_mid} & \textbf{1.0000} (all 8) & 0.9925--0.9962 & $+0.004$--$0.008$ \\
+\texttt{sift1m}        & 0.9920--0.9980 & 0.9745--0.9855 & $+0.009$--$0.022$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Our method is ahead on every batch of every data set (Table~\ref{tab:fishdbc})
+and recovers the reference clustering exactly at every point of the
+\texttt{manifold\_mid} stream. Two qualifications belong with that result. We
+exclude \texttt{fma\_mfcc}: its reference finds only two clusters until batch
+five and both methods' ARI collapses to $\approx 0.09$ as it destabilises, so the
+data set cannot support a quality claim in either direction, though the two
+methods still agree with each other to within $0.014$ throughout. And we do not
+compare wall-clock: FISHDBC is single-threaded Python against our C++/CUDA, so
+only the cost \emph{slope} is meaningful. As the graph doubled, per-batch cost
+grew $1.10$--$1.27\times$ for our method against $0.93$--$1.17\times$ for
+FISHDBC---comparable, with a slight structural edge to FISHDBC, whose HNSW
+insertion is $O(\log n)$ per point.
+
+Finally, the scope difference should be stated plainly: FISHDBC serves a single
+$\mpts$. Extracting all 32 spanning trees for $\mpts \in [1,\kmax]$ from one
+CORE-SG costs $71$--$303\times$ less than computing each from the complete graph,
+and that payoff is preserved after incremental construction---which is the
+capability this work exists to make maintainable, and for which FISHDBC has no
+equivalent.
+
+\subsection{Parameter sensitivity}
+\label{sec:sensitivity}
+
+Anti-hub coverage parameters produce no signal on data whose $k$-NN graph is
+connected, which---per Section~\ref{sec:connectivity}---is every real data set.
+Re-run on fragmenting data the result is positive and bounds the value of the
+per-component quota: the bare $d\ln|E|$ budget reduces 300 components to one at
+half budget \emph{with the quota disabled}. The quota therefore earns its keep
+only when the region count approaches the budget.
+
+The budget's dimensionality term matters more. Using ambient $d$, the rule selects
+$100\%$ of the points at $d=1000$---the ``approximation'' becomes the exact MST it
+exists to replace---and $18$--$40\%$ elsewhere. Substituting an intrinsic
+dimensionality estimated free from the stored $k$-NN radii~\cite{levina_bickel},
+pooled with the harmonic mean~\cite{mackay_ghahramani}, uses $1.4$--$11.8\%$ and
+runs $3.2$--$35.9\times$ faster, at a cost of at most $0.5\%$ in spanning-tree
+weight where bridges are load-bearing. We report this as a cost/accuracy
+trade-off rather than a free win.
+
+The refinement cap is characterised but deliberately left open. Quality is
+monotone in the size of the refinement set, and how much that matters is a
+property of the data: $0.007$ points of recall on \texttt{fma\_mfcc} against
+$0.72$ on \texttt{manifold\_wide}, for $0.6\%$ more time. Separately---and this
+is an observation about the parameter's form rather than a measurement---a cap
+expressed as a fraction of $n$ is $\Theta(n)$ per batch whatever its constant, so
+it does not preserve the sublinear update the design targets. Whether an absolute
+ceiling retains quality as $n$ grows is not something a single-$n$ sweep can
+settle, and we leave it open. All reported results use the same shipped value.
+
+% ===========================================================================
+\section{Discussion}
+% ===========================================================================
+
+\subsection{Scope of the claims}
+
+The bridge estimate can only be evaluated where the $k$-NN graph fragments, and
+Section~\ref{sec:connectivity} shows that no real data set we examined does. The
+evidence for the bridge quality claim therefore comes from synthetic manifold
+data plus \texttt{sift1m}'s two components. This is a property of real data
+rather than an omission in the evaluation---there is nothing to measure on the
+others at any parameter setting---but it does mean the claim's honest scope is
+``on data that fragments'', and that the finding in
+Section~\ref{sec:connectivity} and the claim in Section~\ref{sec:bridgeresults}
+should be read together.
+
+\subsection{Lessons about measurement}
+
+Two methodological points generalise beyond this system.
+
+\textbf{A metric can be measured and still not be measuring anything.} Our
+component counter is populated after the bridges are folded into the labelling,
+so on any successful run it reads 1 by construction. It was briefly quoted as
+evidence that the bridges work, when it could not have read anything else. Such a
+quantity is harder to catch than a wrong number, because nothing about it looks
+impossible; the defence that worked was asking what the metric would read had the
+method failed.
+
+\textbf{Comparisons must differ in exactly one respect.} Every erroneous number we
+produced came from a comparison that varied in two: a reference built over data
+that had not arrived yet; two graphs with independently randomised $k$-NN halves;
+a parallel fraction taken from the parallel rather than the serial run; a
+competitor scored at $\mpts{=}5$ against an $\mpts{=}10$ reference. None were
+algorithmic bugs, and all were caught by a number looking impossible---a ratio
+below 1.0, a speed-up above its ceiling, a variance of exactly zero.
+
+% ===========================================================================
+\section{Conclusion and Future Work}
+% ===========================================================================
+
+We have made the CORE-SG incremental and multi-GPU by attacking its two halves
+separately: sampled-instance Dynamic NN-Descent for the neighbourhood half, and
+an anti-hub bridge estimate for the spanning-tree half whose selected set is
+independent of $n$ and therefore requires no incremental maintenance. The
+estimate produces spanning trees at worst $0.024\%$ heavier than exact at ARI
+exactly $1.0000$; incremental construction beats a compute-matched rebuild by up
+to 7.0 points of recall; per-device memory is invariant with device count; and
+the method matches or exceeds the closest published incremental baseline on every
+batch tested while additionally serving the whole $\mpts$ range from one graph.
+
+Several directions follow.
+
+\textbf{Is the spanning-tree half needed on real data at all?} Our clearest
+finding is that real $k$-NN graphs are already connected at the operating
+$\kmax$. Taken further, this suggests that for a large class of real data the
+single-linkage structure is recoverable from the neighbourhood graph alone, with
+the spanning-tree half required only as a guard. Characterising \emph{which} data
+requires it---and detecting that cheaply, as our connectivity gate does---would
+simplify density-based clustering pipelines well beyond this system.
+
+\textbf{Sampled-instance descent as a construction method.} Section~\ref{sec:incremental}
+shows overlapping sampled instances beating a single global descent at matched
+compute. Studied on its own---instance count, overlap fraction, number of
+passes---this may be a better way to build large $k$-NN graphs, independent of
+incrementality.
+
+\textbf{Intrinsic dimensionality as a general parameter scale.} The budget was one
+instance of a broader pattern: any parameter in a density-based method that
+scales with ambient $d$ deserves the same scrutiny.
+
+\textbf{The form of the refinement cap}, discussed in
+Section~\ref{sec:sensitivity}.
+
+\textbf{Multi-node and deletion.} The instance abstraction is already the right
+unit to ship to another machine, and top-$k$ merging is a commutative,
+associative reduction, so it distributes without synchronisation; notably,
+because the anti-hub set is sublinear in $n$, the bridge spanning tree can be
+gathered onto one machine at any scale. Deletion is untouched and is the harder
+direction.
+
+\section*{Acknowledgments}
+TODO.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
