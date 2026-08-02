@@ -494,8 +494,51 @@ The primary baseline is \textbf{full recompute}: rebuilding from scratch at each
 batch. Because the incremental path revisits sampled base points once per batch,
 a plain rebuild is a \emph{cheaper} baseline rather than an equal one, so we also
 sweep the rebuild's descent effort and report the resulting cost/quality frontier
-(Section~\ref{sec:incremental}). The external baseline is
-FISHDBC~\cite{fishdbc}.
+(Section~\ref{sec:incremental}).
+
+\subsubsection*{Why FISHDBC is the only external baseline}
+
+A comparison is informative only when both methods solve the same problem at the
+same granularity. We required a baseline to (i) maintain a density-based
+clustering structure under \emph{insertion}, and (ii) operate on individual
+points rather than on summaries. FISHDBC~\cite{fishdbc} is the only published
+method we are aware of that satisfies both, and it is additionally the opposite
+design decision on the same problem---it maintains a spanning tree, we avoid
+maintaining one---which makes the comparison informative rather than merely
+available.
+
+The candidates we considered and excluded fail one of the two criteria, and the
+reasons are worth stating because each exclusion would otherwise look like an
+omission.
+
+\emph{Different granularity.} I-HASTREAM~\cite{ihastream} maintains a hierarchy
+over micro-clusters, and Data Bubbles~\cite{databubbles} and BIRCH-derived
+methods~\cite{birch} cluster over summaries. Scoring these against a
+point-level reference would conflate the error introduced by summarisation with
+the error introduced by incremental maintenance, and the resulting number would
+not attribute to either.
+
+\emph{Batch, not incremental.} MapReduce HDBSCAN*~\cite{mrhdbscan}, accelerated
+HDBSCAN*~\cite{acceleratedhdbscan} and hybrid CPU/GPU DBSCAN~\cite{bpshdbscan}
+address scale rather than insertion. They have no update path, so on the axis
+this work is about there is nothing to compare.
+
+\emph{Component, not contribution.} We deliberately do not benchmark against
+approximate $k$-NN graph libraries. This work does not claim a faster $k$-NN
+graph; it \emph{uses} Dynamic NN-Descent~\cite{dynamic_nndescent} and contributes
+a decomposition of the update. Racing our $k$-NN half against a dedicated
+library would evaluate a component we adopt rather than a claim we make. A recall
+check against brute force establishes that the half is sound, which is what the
+argument requires.
+
+Finally, the sparseness of this list is itself a finding about the problem
+setting. No published method maintains a structure serving a \emph{range} of
+$\mpts$ under insertion, which is why full recompute carries the primary
+comparison and why the scope difference in Section~\ref{sec:fishdbc}---FISHDBC
+serves a single $\mpts$---is a difference in capability rather than in
+performance.
+
+\subsection{Hardware}
 
 Measurements were taken on a cluster of 4$\times$RTX 2080 SUPER (sm\_75, 8\,GB,
 CUDA 12.9) unless stated otherwise; a subset was taken on a single RTX 4070 Ti
