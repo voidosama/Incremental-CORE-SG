@@ -74,17 +74,16 @@ memory and queue onto any accelerator. The spanning-tree half is replaced by an
 cannot supply are those bridging density-separated regions, and such bridges
 leave from region borders, a spanning tree over the $d\ln|E|$ lowest
 locally-normalised reverse-degree nodes suffices. The selected set is
-independent of $n$, which eliminates incremental spanning-tree maintenance
-entirely. Across 14 data sets and 18{,}485 measurements the estimate yields
+independent of $n$, which removes incremental spanning-tree maintenance from the
+problem. Across 14 data sets and 18{,}485 measurements the estimate yields
 spanning trees at worst $0.024\%$ heavier than exact at DBSCAN* ARI exactly
 $1.0000$, while costing $10.5$--$36\times$ less; incremental construction beats
 a \emph{compute-matched} rebuild by up to $7.0$ points of recall; per-device
-memory is exactly invariant with device count; and the method matches or exceeds
-FISHDBC on every batch of every stream tested. We further report a finding with
-implications beyond this work: on every real data set examined the
-$\kmax$-nearest-neighbour graph is \emph{already connected} at the operating
-$\kmax$, which reframes the spanning-tree half from essential structure to
-insurance that is rarely claimed.
+memory is exactly invariant with device count; and the method exceeds FISHDBC on
+every batch of every stream tested. We also report that on every real data set
+examined the $\kmax$-nearest-neighbour graph is \emph{already connected} at the
+operating $\kmax$, so the spanning-tree half acts there as a guard against
+fragmentation rather than as essential structure.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -204,13 +203,12 @@ $\mpts \le \kmax$, some MST of the complete $\mrd^{\mpts}$ graph is contained in
 reweighting the $O(n\kmax)$ stored edges with $\mrd^{\mpts}$ and running an MST
 over that list.
 
-The intuition, which motivates our replacement of the second half, follows from
-\eqref{eq:mrd}. An edge's weight falls into two cases. When $d(x,y)$ is small
-relative to the two core distances, the weight is determined by the core
-distances alone, and those are recoverable from the $k$-NN graph. The edges that
-carry information not already present are those where the true distance
-dominates: long edges bridging regions the neighbourhoods cannot reach.
-$\mathrm{MST}_{\kmax}$ exists to supply exactly those.
+This motivates our replacement of the second half. By \eqref{eq:mrd}, an edge's
+weight falls into two cases. When $d(x,y)$ is small relative to the two core
+distances, the weight is determined by the core distances alone, which are
+recoverable from the $k$-NN graph. The edges carrying information not already
+present are those where the true distance dominates: long edges bridging regions
+the neighbourhoods cannot reach. $\mathrm{MST}_{\kmax}$ supplies those.
 
 \subsection{Approximate $k$-NN graph construction}
 
@@ -237,9 +235,8 @@ there. I-HASTREAM~\cite{ihastream} maintains a hierarchy over micro-clusters, a
 different granularity, as do summarisation approaches such as Data
 Bubbles~\cite{databubbles} and BIRCH-derived methods~\cite{birch}. Distributed
 batch constructions~\cite{mrhdbscan} address scale but not incrementality.
-General dynamic MST maintenance~\cite{mst_dynamic_survey,mst_maintenance} is
-well studied; we discuss in Section~\ref{sec:bridges} why we avoid it rather than
-adopt it.
+General dynamic MST maintenance~\cite{mst_maintenance} is well studied; we
+discuss in Section~\ref{sec:bridges} why we avoid it rather than adopt it.
 
 \subsection{Hubness}
 
@@ -309,15 +306,14 @@ both operate on objects far smaller than the data set.}
 An \emph{instance} is a random sample of the existing base points unioned with
 the entire arriving batch, together with the edges those sampled points already
 possess. Each instance is a self-contained NN-Descent problem with no reference
-to global state, and that single property yields three consequences.
+to global state, which yields three consequences.
 
-First, it is warm-started: sampled base points arrive with real neighbourhoods,
-so an instance converges in far fewer rounds than a cold build. Second, it bounds
-device memory to $|\text{sample}| + |\text{batch}|$ vectors rather than the whole
-data set, which is what makes data sets larger than one accelerator tractable.
-Third, instances never communicate, so they queue onto whatever device is free;
-\emph{the instance count, not the device count, is the unit of parallelism}, a
-claim we verify directly in Section~\ref{sec:scaling}.
+It is warm-started: sampled base points arrive with real neighbourhoods, so an
+instance converges in fewer rounds than a cold build. It bounds device memory to
+$|\text{sample}| + |\text{batch}|$ vectors rather than the whole data set, which
+admits data sets larger than one accelerator. And instances never communicate, so
+they queue onto whatever device is free; \emph{the instance count, not the device
+count, is the unit of parallelism}, verified in Section~\ref{sec:scaling}.
 
 After the instances complete, their neighbourhoods are merged into the global
 graph by repeated insertion into sorted top-$k$ lists. This operation is
@@ -365,10 +361,9 @@ stored with their base distance so that the reweighting for a query $\mpts$
 treats them identically to $k$-NN edges.
 
 The size of the selected set depends on $d$ and $\ln|E|$, \emph{not on $n$}.
-Consequently the bridge computation is $O(m^2 d)$ with $m \ll n$, and---the
-property that matters most---\textbf{no spanning tree ever requires repair when
-points arrive}. There is no incremental-MST problem to solve; there is only a
-small set to re-select. This is the trade the whole design rests on.
+The bridge computation is therefore $O(m^2 d)$ with $m \ll n$, and \textbf{no
+spanning tree requires repair when points arrive}: there is no incremental-MST
+problem to solve, only a small set to re-select.
 
 The hubness index attaches to the $k$-NN graph as an observer, so every inserted
 or evicted directed edge updates a reverse degree in $O(1)$ and marks the
@@ -593,19 +588,17 @@ manifold sets never do. Ambient dimensionality does not explain the threshold:
 \label{fig:components}
 \end{figure}
 
-Three observations follow, and we regard the first as the most transferable
-result in this paper.
+Three observations follow.
 
-\textbf{The MST half is insurance, and on real data it is rarely claimed.} If the
-$k$-NN graph is already connected, the spanning-tree half contributes nothing
-beyond what the neighbourhoods provide. This reframes the second half of
-\eqref{eq:coresg} from essential structure to a guard against fragmentation, and
-it explains why an approximation as crude as ours suffices: on most real data the
-object being approximated is nearly empty. It also suggests a cheap gate. Deriving
-the component labelling costs $0.08$--$3.5$\,ms across our data sets, against
-$5.3$--$222$\,ms of hubness and bridge work---a $48$--$136\times$ ratio---so
-testing connectivity first and skipping the bridge computation when it holds is
-close to free.
+\textbf{The MST half acts as a guard against fragmentation rather than as
+essential structure.} If the $k$-NN graph is already connected, the spanning-tree
+half of \eqref{eq:coresg} contributes nothing beyond the neighbourhoods. This
+also explains why an approximation as coarse as ours suffices: on most real data
+the object being approximated is nearly empty. It suggests a cheap gate. Deriving
+the component labelling costs $0.08$--$3.5$\,ms across our data sets against
+$5.3$--$222$\,ms of hubness and bridge work, a $48$--$136\times$ ratio, so
+testing connectivity first and skipping the bridge computation when it holds
+costs little.
 
 \textbf{Ambient dimensionality does not predict the threshold.} \texttt{20ng\_tfidf}
 at $d=1000$ connects at $\kmax=4$; \texttt{gist1m} at $d=960$ requires
@@ -674,20 +667,19 @@ Two conclusions follow. First, \textbf{the two effort knobs are not
 interchangeable}: doubling and quadrupling the number of descent rounds returns
 \emph{bit-identical} distance-evaluation counts (222.5\,M on \texttt{gist1m}),
 because the early-stopping criterion fires at the same round either way. A single
-descent is not short of time; it has reached a fixed point of the local join.
-Widening the candidate list does help, because it changes which pairs are
-compared at all. The quality ceiling of a single build is set by the
-\emph{breadth} of the local join, not by how long it runs.
+descent has reached a fixed point of the local join, so it is not short of time.
+Widening the candidate list does help, since it changes which pairs are compared.
+The quality ceiling of a single build is set by the \emph{breadth} of the local
+join rather than by its duration.
 
 Second, tuning recovers 5.3 of the original 8.9 points on \texttt{gist1m} and 6.0
-of 13.0 on \texttt{glove100}, leaving 3.5 and 7.0. The defensible claim is
-therefore sharper than the raw margin: \textbf{incremental construction beats a
-compute-matched rebuild on data where a single descent struggles, and the margin
-grows with the difficulty of the $k$-NN problem} ($+0.09$ on
-\texttt{manifold\_mid}, $+3.5$ on \texttt{gist1m}, $+7.0$ on \texttt{glove100}).
-The mechanism is the decomposition rather than the extra work: overlapping
-sampled instances explore a different part of the search space than one global
-descent reaches.
+of 13.0 on \texttt{glove100}, leaving 3.5 and 7.0. We therefore state the claim
+as: \textbf{incremental construction beats a compute-matched rebuild on data
+where a single descent struggles, and the margin grows with the difficulty of the
+$k$-NN problem} ($+0.09$ on \texttt{manifold\_mid}, $+3.5$ on \texttt{gist1m},
+$+7.0$ on \texttt{glove100}). The mechanism is the decomposition rather than the
+extra work: overlapping sampled instances explore a different part of the search
+space than one global descent reaches.
 
 \subsection{Amortisation and batch size}
 \label{sec:batchsize}
@@ -762,15 +754,15 @@ because larger instances amortise the fixed per-job transfer.
 
 Two further results characterise the design more sharply than a speed-up curve.
 \textbf{Parallelism is bounded by the decomposition, not the hardware}: with a
-single instance, four GPUs deliver $0.99\times$---nothing---while with two the
-speed-up appears at two devices and plateaus exactly where instances run out.
+single instance, four GPUs deliver $0.99\times$, while with two the speed-up
+appears at two devices and plateaus where the instances run out.
 \textbf{Per-device memory is exactly invariant with device count} and controlled
 entirely by the instance count (Fig.~\ref{fig:memory}). The response to a data
-set that does not fit is therefore to re-partition on the same hardware, not to
-add devices or memory---a property a design can fail to have, and the substance
-of the capacity argument. At $\kmax{=}128$ one instance over $10^7$ points
-requires $8.29$\,GiB and an 8\,GB device refuses it, matching the prediction of
-our sizing model exactly.
+set that does not fit is therefore to re-partition on the same hardware rather
+than to add devices or memory; a design that replicated data across devices, or
+whose per-device state grew with the device count, would not have this property.
+At $\kmax{=}128$ one instance over $10^7$ points requires $8.29$\,GiB and an
+8\,GB device refuses it, matching our sizing model's prediction.
 
 \begin{figure}[!t]
 \centering
@@ -796,9 +788,8 @@ our sizing model exactly.
 \addlegendentry{16 instances}
 \end{axis}
 \end{tikzpicture}
-\caption{Per-device memory on \texttt{capacity10m} ($10^7$ points). Exactly flat
-across device count, and set entirely by the instance count. Measured to the
-byte, not modelled.}
+\caption{Per-device memory on \texttt{capacity10m} ($10^7$ points), flat across
+device count and set entirely by the instance count.}
 \label{fig:memory}
 \end{figure}
 
@@ -832,23 +823,22 @@ data set & this work & FISHDBC & margin \\
 
 Our method is ahead on every batch of every data set (Table~\ref{tab:fishdbc})
 and recovers the reference clustering exactly at every point of the
-\texttt{manifold\_mid} stream. Two qualifications belong with that result. We
-exclude \texttt{fma\_mfcc}: its reference finds only two clusters until batch
-five and both methods' ARI collapses to $\approx 0.09$ as it destabilises, so the
-data set cannot support a quality claim in either direction, though the two
-methods still agree with each other to within $0.014$ throughout. And we do not
-compare wall-clock: FISHDBC is single-threaded Python against our C++/CUDA, so
-only the cost \emph{slope} is meaningful. As the graph doubled, per-batch cost
-grew $1.10$--$1.27\times$ for our method against $0.93$--$1.17\times$ for
-FISHDBC---comparable, with a slight structural edge to FISHDBC, whose HNSW
-insertion is $O(\log n)$ per point.
+\texttt{manifold\_mid} stream. Two qualifications apply. We exclude
+\texttt{fma\_mfcc}: its reference finds only two clusters until batch five and
+both methods' ARI collapses to $\approx 0.09$ as it destabilises, so the data set
+cannot support a quality claim in either direction, though the two methods agree
+with each other to within $0.014$ throughout. And we do not compare wall-clock:
+FISHDBC is single-threaded Python against our C++/CUDA, so only the cost
+\emph{slope} is meaningful. As the graph doubled, per-batch cost grew
+$1.10$--$1.27\times$ for our method against $0.93$--$1.17\times$ for FISHDBC:
+comparable, with a slight structural edge to FISHDBC, whose HNSW insertion is
+$O(\log n)$ per point.
 
-Finally, the scope difference should be stated plainly: FISHDBC serves a single
-$\mpts$. Extracting all 32 spanning trees for $\mpts \in [1,\kmax]$ from one
-CORE-SG costs $71$--$303\times$ less than computing each from the complete graph,
-and that payoff is preserved after incremental construction---which is the
-capability this work exists to make maintainable, and for which FISHDBC has no
-equivalent.
+The two methods also differ in scope. FISHDBC serves a single $\mpts$. Extracting
+all 32 spanning trees for $\mpts \in [1,\kmax]$ from one CORE-SG costs
+$71$--$303\times$ less than computing each from the complete graph, and that
+payoff is preserved after incremental construction. FISHDBC has no equivalent
+capability.
 
 \subsection{Parameter sensitivity}
 \label{sec:sensitivity}
@@ -901,19 +891,19 @@ Two methodological points generalise beyond this system.
 
 \textbf{A metric can be measured and still not be measuring anything.} Our
 component counter is populated after the bridges are folded into the labelling,
-so on any successful run it reads 1 by construction. It was briefly quoted as
+so on any successful run it reads 1 by construction. We briefly quoted it as
 evidence that the bridges work, when it could not have read anything else. Such a
-quantity is harder to catch than a wrong number, because nothing about it looks
-impossible; the defence that worked was asking what the metric would read had the
-method failed.
+quantity is harder to detect than a wrong number, since nothing about it looks
+impossible. The check that caught it was asking what the metric would read had
+the method failed.
 
 \textbf{Comparisons must differ in exactly one respect.} Every erroneous number we
 produced came from a comparison that varied in two: a reference built over data
 that had not arrived yet; two graphs with independently randomised $k$-NN halves;
 a parallel fraction taken from the parallel rather than the serial run; a
 competitor scored at $\mpts{=}5$ against an $\mpts{=}10$ reference. None were
-algorithmic bugs, and all were caught by a number looking impossible---a ratio
-below 1.0, a speed-up above its ceiling, a variance of exactly zero.
+algorithmic bugs, and all were caught by an impossible value---a ratio below 1.0,
+a speed-up above its ceiling, a variance of exactly zero.
 
 % ===========================================================================
 \section{Conclusion and Future Work}
@@ -931,13 +921,13 @@ batch tested while additionally serving the whole $\mpts$ range from one graph.
 
 Several directions follow.
 
-\textbf{Is the spanning-tree half needed on real data at all?} Our clearest
-finding is that real $k$-NN graphs are already connected at the operating
-$\kmax$. Taken further, this suggests that for a large class of real data the
-single-linkage structure is recoverable from the neighbourhood graph alone, with
-the spanning-tree half required only as a guard. Characterising \emph{which} data
-requires it---and detecting that cheaply, as our connectivity gate does---would
-simplify density-based clustering pipelines well beyond this system.
+\textbf{Is the spanning-tree half needed on real data at all?} Real $k$-NN graphs
+are already connected at the operating $\kmax$, which suggests that for a large
+class of real data the single-linkage structure is recoverable from the
+neighbourhood graph alone, with the spanning-tree half required only as a guard.
+Characterising which data requires it, and detecting that cheaply as our
+connectivity gate does, would simplify density-based clustering pipelines beyond
+this system.
 
 \textbf{Sampled-instance descent as a construction method.} Section~\ref{sec:incremental}
 shows overlapping sampled instances beating a single global descent at matched

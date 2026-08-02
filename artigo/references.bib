@@ -8,15 +8,18 @@
 % record, since the folder stores titles rather than full metadata.
 % ---------------------------------------------------------------------------
 
+% DOI verified against the PDF in referencias/coresg related/ (2026-08-02).
 @inproceedings{coresg,
   author    = {Neto, Antonio Cavalcante Araujo and Naldi, Murilo Coelho and
                Campello, Ricardo J. G. B. and Sander, J{\"o}rg},
   title     = {{CORE-SG}: Efficient Computation of Multiple {MST}s for
                Density-Based Methods},
-  booktitle = {IEEE International Conference on Data Engineering (ICDE)},
+  booktitle = {IEEE 38th International Conference on Data Engineering (ICDE)},
   year      = {2022},
-  pages     = {2168--2180}
+  pages     = {2168--2180},
+  doi       = {10.1109/ICDE53745.2022.00076}
 }
+% NOTE: page range not confirmed -- check against IEEE Xplore.
 
 @inproceedings{hdbscan,
   author    = {Campello, Ricardo J. G. B. and Moulavi, Davoud and Sander, J{\"o}rg},
@@ -47,13 +50,18 @@
   pages     = {226--231}
 }
 
-@inproceedings{fosc,
-  author    = {Campello, Ricardo J. G. B. and Moulavi, Davoud and Zimek, Arthur and
-               Sander, J{\"o}rg},
-  title     = {A Framework for Semi-Supervised and Unsupervised Optimal Extraction
-               of Clusters from Hierarchies},
-  booktitle = {Data Mining and Knowledge Discovery},
-  year      = {2013}
+% Verified against the PDF in referencias/metrics/ (2026-08-02).
+@article{fosc,
+  author  = {Campello, Ricardo J. G. B. and Moulavi, Davoud and Zimek, Arthur and
+             Sander, J{\"o}rg},
+  title   = {A Framework for Semi-Supervised and Unsupervised Optimal Extraction
+             of Clusters from Hierarchies},
+  journal = {Data Mining and Knowledge Discovery},
+  volume  = {27},
+  number  = {3},
+  pages   = {344--371},
+  year    = {2013},
+  doi     = {10.1007/s10618-013-0311-4}
 }
 
 @inproceedings{nndescent,
@@ -65,21 +73,33 @@
   pages     = {577--586}
 }
 
+% Verified against the PDF in referencias/nndescent/ (2026-08-02).
 @article{dynamic_nndescent,
-  author  = {Wang, Yu and Zhao, Xiang and Xiao, Chuan and Yao, Bin and Zhang, Wenjie},
-  title   = {Dynamic {NN}-Descent: An Efficient k-{NN} Graph Construction Method},
+  author  = {Wang, Jie-Feng and Zhao, Wan-Lei and Xiao, Shihai and Yao, Jiajie and
+             Zhang, Xuecang},
+  title   = {Dynamic {NN}-Descent: An Efficient $k$-{NN} Graph Construction Method},
   journal = {IEEE Transactions on Big Data},
-  year    = {2025}
+  volume  = {11},
+  number  = {2},
+  pages   = {879--885},
+  year    = {2025},
+  doi     = {10.1109/TBDATA.2024.3460534}
 }
-% VERIFY: volume, number, pages.
+% NOTE: end page 885 inferred from the short-paper start page 879; confirm.
 
+% Verified against the PDF in referencias/nndescent/ (2026-08-02).
 @article{knn_merge,
-  title   = {On the Merge of k-{NN} Graph},
+  author  = {Zhao, Wan-Lei and Wang, Hui and Lin, Peng-Cheng and Ngo, Chong-Wah},
+  title   = {On the Merge of $k$-{NN} Graph},
   journal = {IEEE Transactions on Big Data},
-  year    = {2022}
+  volume  = {8},
+  number  = {6},
+  year    = {2022},
+  doi     = {10.1109/TBDATA.2021.3101517}
 }
-% VERIFY: authors, volume, number, pages.
 
+% Verified 2026-08-02: arXiv:1910.07283, submitted 16 Oct 2019, sole author.
+% Still arXiv-only -- no peer-reviewed version located.
 @article{fishdbc,
   author  = {Dell'Amico, Matteo},
   title   = {{FISHDBC}: Flexible, Incremental, Scalable, Hierarchical Density-Based
@@ -87,7 +107,6 @@
   journal = {arXiv preprint arXiv:1910.07283},
   year    = {2019}
 }
-% VERIFY: this is the arXiv record; check for a later peer-reviewed version.
 
 @article{hnsw,
   author  = {Malkov, Yu A. and Yashunin, Dmitry A.},
@@ -100,15 +119,16 @@
   year    = {2020}
 }
 
+% Verified 2026-08-02 against dblp: authors, venue, year and pages all confirmed.
 @inproceedings{ihastream,
   author    = {Hassani, Marwan and Spaus, Pascal and Cuzzocrea, Alfredo and Seidl, Thomas},
   title     = {{I-HASTREAM}: Density-Based Hierarchical Clustering of Big Data Streams
                and Its Application to Big Graph Analytics Tools},
   booktitle = {IEEE/ACM International Symposium on Cluster, Cloud and Grid Computing (CCGrid)},
   year      = {2016},
-  pages     = {656--665}
+  pages     = {656--665},
+  doi       = {10.1109/CCGRID.2016.102}
 }
-% VERIFY: not in artigo/referencias/. Written from memory -- confirm venue and pages.
 
 @inproceedings{databubbles,
   author    = {Breunig, Markus M. and Kriegel, Hans-Peter and Kr{\"o}ger, Peer and
@@ -128,12 +148,17 @@
   pages     = {103--114}
 }
 
-@inproceedings{mrhdbscan,
-  title     = {Hierarchical Density-Based Clustering Using {MapReduce}},
-  booktitle = {IEEE Transactions on Big Data},
-  year      = {2019}
+% Verified against the PDF in referencias/dbscan related/ (2026-08-02).
+@article{mrhdbscan,
+  author  = {dos Santos, Joelson Ant{\^o}nio and Syed, Talat Iqbal and
+             Naldi, Murilo C. and Campello, Ricardo J. G. B. and Sander, J{\"o}rg},
+  title   = {Hierarchical Density-Based Clustering Using {MapReduce}},
+  journal = {IEEE Transactions on Big Data},
+  volume  = {7},
+  number  = {1},
+  year    = {2021},
+  doi     = {10.1109/TBDATA.2019.2907624}
 }
-% VERIFY: authors, volume, pages.
 
 @article{hubs,
   author  = {Radovanovi{\'c}, Milo{\v s} and Nanopoulos, Alexandros and Ivanovi{\'c}, Mirjana},
@@ -205,19 +230,26 @@
   pages     = {331--339}
 }
 
-@article{mst_dynamic_survey,
-  title   = {Dynamic Graph Algorithms: Techniques for Maintaining Minimum Spanning Trees},
-  journal = {Survey},
-  year    = {2020}
-}
-% VERIFY: authors, venue, year -- placeholder from artigo/referencias/surveys and reviews/.
+% REMOVED: mst_dynamic_survey. The PDF in referencias/surveys and reviews/ titled
+% "Dynamic Graph Algorithms: Techniques for Maintaining Minimum Spanning Trees"
+% is a BACHELOR'S THESIS (Houda El Fezzak Bekkouri, supervised by Amalia Duch
+% Brown, Universitat Politecnica de Catalunya, 2024), not a peer-reviewed survey.
+% It should not be cited in a journal submission. If a survey citation is wanted
+% at that point in the text, a proper one needs to be found.
 
+% Verified against the PDF in referencias/mst maintenance/ (2026-08-02).
 @article{mst_maintenance,
+  author  = {Luo, Mao and Qin, Huigang and Wu, Xinyun and Xiong, Caiquan and
+             Xia, Dahai and Ke, Yuanzhi},
   title   = {Efficient Maintenance of Minimum Spanning Trees in Dynamic Weighted
              Undirected Graphs},
-  year    = {2023}
+  journal = {Mathematics},
+  volume  = {12},
+  number  = {7},
+  pages   = {1021},
+  year    = {2024},
+  doi     = {10.3390/math12071021}
 }
-% VERIFY: authors, venue, volume, pages.
 
 @article{amdahl,
   author  = {Amdahl, Gene M.},
