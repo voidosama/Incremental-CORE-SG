@@ -42,3 +42,10 @@ env/
 *.swp
 .DS_Store
 Thumbs.db
+
+# LaTeX build output
+artigo/build_tex/
+*.aux
+*.bbl
+*.blg
+*.synctex.gz
