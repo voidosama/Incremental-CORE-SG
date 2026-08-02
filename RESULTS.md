@@ -1,10 +1,10 @@
 # Results and analysis
 
 Full experimental sweep, 4× RTX 2080 SUPER (sm_75, 8 GB), CUDA 12.9.
-**17,538 measurements · 48 run/dataset pairs · 14 data sets · up to 5 seeds · zero failures.**
+**18,485 measurements · 56 run/dataset pairs · 14 data sets · up to 5 seeds · zero failures.**
 (11 of the 14 appear in the bridges experiment, which is where the counts below are drawn
-from; `capacity10m` carries two labels because its scaling sweep and its capacity probe are
-separate runs.)
+from; `capacity10m` carries three labels because its scaling sweep and its two capacity
+probes are separate runs.)
 
 A further **8,434 measurements** from four follow-up experiments were run on the dev box
 (1× RTX 4070 Ti SUPER) into `results_local.csv` — see the provenance note in §8 for which of
@@ -19,12 +19,12 @@ the way it is, [README.md](README.md) for the implementation.
 
 | claim | verdict | headline evidence |
 |---|---|---|
-| **A** — incremental updates preserve quality | **Supported, and it survives a compute-matched rebuild** | Beats a full rebuild on **8 of 8** data sets; against a *tuned* rebuild the margin is still **+3.5** (gist1m) and **+7.0** (glove100) points of recall — §1.1b |
+| **A** — incremental updates preserve quality | **Supported, and it survives a compute-matched rebuild** | At a 25 % batch an update costs **0.97–1.24× a full rebuild and yields a better graph on 4/4** data sets — §1.4. Against a *tuned* rebuild the margin is still **+3.5** (gist1m) and **+7.0** (glove100) points — §1.1b |
 | **B** — the design scales across GPUs | **Supported** | 2.50–3.23× on 4 GPUs, per-device memory *exactly* invariant with device count |
 | **C** — anti-hub bridges replace the MST half | **Supported** | Worst weight ratio **1.00024**, ARI exactly **1.0000**, 10.5–36× faster; the bare budget takes **300 components to 1** at half budget with the quota disabled — §5.4 |
 | CORE-SG payoff survives incrementality | **Supported** | 71–303× for a full mpts sweep |
 | **vs FISHDBC**, the only external baseline | **Supported** | Ahead on **every batch of every data set** on one shared yardstick; exact recovery of the reference clustering on manifold_mid — §5.6 |
-| capacity: config that needs > 1 GPU | **Not demonstrated** | see §5.3 — the intended configuration was never actually built; `capacity10m_oom128` is queued |
+| capacity: config that needs > 1 GPU | **Half demonstrated** | at k=128 one instance needs **8.29 GiB** and the 8 GB card **refuses it** — the predicted figure exactly. The contrasting arm that must *succeed* has not run yet — §5.3b |
 
 ---
 
@@ -125,6 +125,43 @@ Recall change from batch 1 to batch 25, sampled at every batch:
 
 No decay. Three of four *improve*, and the one that declines does so by a third of a
 percentage point over 25 batches. The graph does not rot.
+
+### 1.4 Batch size — and the sharpest statement of Claim A
+
+Batch size as a fraction of n, against total insert cost and final recall, with a single
+rebuild as the line to beat. n = 50 000 (4 000 for `manifold_c24`), 3 seeds, cluster:
+
+| data set | 0.1 % batch | 25 % batch | single rebuild |
+|---|---|---|---|
+| fma_mfcc | 97.51 s / 0.99951 | **0.92 s / 0.99851** | 0.95 s / 0.99487 |
+| sift1m | 92.97 s / 0.99988 | **0.88 s / 0.99737** | 0.90 s / 0.99116 |
+| manifold_mid | 86.03 s / 0.99887 | **0.92 s / 0.99914** | 0.74 s / 0.99309 |
+| manifold_c24 | 13.79 s / 1.00000 | **0.12 s / 0.99804** | 0.11 s / 0.93876 |
+
+> **At a 25 % batch an incremental update costs 0.97–1.24× a full rebuild and produces a
+> strictly better graph** — on all four data sets, by 0.4 to 5.9 points of recall.
+
+That is a better statement of Claim A than §1.1's. The original framing was "cheaper than
+rebuilding at every batch, at higher quality", which invites the question of what the right
+comparison is. This one needs no framing: *for the same price as one rebuild you get a
+better result*, and the price is measured against the rebuild the reader would otherwise do.
+
+Below that batch size you are buying freshness, and the curve says what it costs — roughly
+**100× per point** at 0.1 % batches against 25 % ones, for at most 0.25 points of recall.
+The practical reading: batch up to ~10–25 % of the graph if latency allows, because that is
+where an update is effectively free.
+
+**Where the money goes.** The share of update time in phases that do not shrink with the
+batch — hubness refresh, bridge MST, connectivity — rises from **8.6–8.9 % at 25 % batches
+to 24.6–28.1 % at 0.1 %**. That is the amortisation story made concrete, and it is the
+mechanism behind the cost curve above: those three phases run once per insert however few
+points arrived.
+
+> **Scale matters for seeing this.** The same experiment on the dev box at n = 4 000 showed
+> the fixed share flat at ~5 % with no trend at all. The effect only appears once the graph
+> is large enough for the per-update constants to matter. A small-n version of this
+> experiment would have concluded, wrongly, that batch size does not interact with the fixed
+> costs.
 
 ---
 
@@ -343,9 +380,23 @@ is "on data that fragments", and §2.2 should be cited whenever the claim is sta
 Backend parity is covered by a unit test and by `preflight`, but no experiment writes it to
 the CSV. If asked "do the backends agree?", the answer currently cites a unit test.
 
-*Addressed, not yet swept:* the `parity` experiment now measures it. Dev-box check on
-`manifold_c24`: recall 0.93062 (CUDA) vs 0.92970 (CPU), DBSCAN\* ARI between the two
-0.99946, and `jobs_on_device` confirms the GPU arm was not silently demoted to the host.
+**Resolved.** The `parity` experiment measures it, on the cluster, n = 50 000, 3 seeds:
+
+| data set | CUDA recall | CPU recall | ARI between | MST weight ratio | on device |
+|---|---|---|---|---|---|
+| fma_mfcc | 0.99491 | 0.99493 | 0.99991 | **1.00000** | 4 / 0 |
+| sift1m | 0.99100 | 0.99103 | 0.99977 | **1.00000** | 4 / 0 |
+| manifold_mid | 0.99471 | 0.99523 | 0.99432 | 0.99887 | 4 / 0 |
+
+Recall differs by at most **0.0005**, two of three MSTs are identical in total weight, and
+the clusterings agree at ARI ≥ 0.994. `jobs_on_device` (4 on the CUDA arm, 0 on the CPU arm)
+confirms the GPU arm was not silently demoted to the host, which would have made the arms
+agree perfectly and mean nothing. CUDA builds 1.7–1.8× faster than the full CPU on the same
+machine.
+
+Read the weight ratio as *symmetric* here: the two arms are two separately built `CoreSG`
+objects with independently randomised k-NN halves, so a value either side of 1.0 is
+legitimate and reflects nothing but which arm found a marginally heavier tree.
 
 ### 5.3 The capacity claim was never demonstrated
 
@@ -360,6 +411,31 @@ assumed a configuration the experiment never constructs.
 To exceed 7.6 GiB of free VRAM in a single instance would need k=128 (8.29 GiB at the same
 n) or roughly n=15M. Either is a short run. **Until then, the capacity claim should be
 stated as arithmetic plus the memory-scaling table in §4.3, not as a demonstration.**
+
+### 5.3b The k=128 probe — the failing half is now measured
+
+`capacity10m_oom128`, one instance over 10 M points at k = 128, OOM fallback disabled:
+
+| measurement | value |
+|---|---|
+| `largest_instance_nodes` | 6 250 000 (= base 5 M + batch 1.25 M, exactly as predicted) |
+| `largest_instance_bytes` | 8.90 × 10⁹ B = **8.29 GiB** |
+| `jobs_out_of_memory` | **1** |
+
+**The predicted figure is reproduced exactly and the 8 GB card refuses the job.** The
+arithmetic in §5.3 was right, and the configuration that does not fit now exists as a
+measurement rather than a calculation.
+
+> **This is half a demonstration.** The claim is *"one instance cannot fit, four instances
+> can"* — a contrast. The `1x4` arm, which must complete, had not been written when this was
+> recorded. Until it lands, what is measured is that the configuration OOMs, not that the
+> instance decomposition rescues it. State it that way.
+
+> **Two columns from that row are not results.** `insert_seconds` reads 10 537.8 (2.9 hours)
+> and `parallel_fraction` reads 0.0012. With the fallback disabled the job was refused, the
+> instance produced nothing (`instance_seconds` 0.016), and the pipeline then ground through
+> the downstream phases on a degenerate graph. Neither number describes the system's
+> performance; both must stay out of any timing table.
 
 ### 5.4 Two sensitivity parameters produce no signal
 
@@ -564,35 +640,43 @@ down first; without that, the second would have looked like an unexplained flat 
 
 ## 8. Future work
 
-### Immediate — mostly done
+### Immediate — done, bar one arm
 
-Six additions are in the harness; the matrix is now 70 runs. Four have been run and their
-results are folded into the sections above.
+Seven additions are in the harness; the matrix is now 70 runs. All have run and their
+results are folded into the sections above, except the second half of the capacity probe.
 
 | addition | status | where |
 |---|---|---|
-| `connectivity` — k-NN component counts and the gate | **run**, 3 seeds | §2.1, §2.2 |
-| `rebuild_effort` frontier | **run** on gist1m, glove100, manifold_mid | §1.1b |
-| FISHDBC head-to-head on one yardstick | **run**, 20 k points | §5.6 |
-| `sensitivity` re-targeted at fragmenting data, + refinement-cap sweep | **run**, 2 seeds | §5.4, §5.5 |
-| `batchsize` — amortised cost vs batch size | **cluster pending** | — |
-| `parity` — CPU vs CUDA | **cluster pending** (dev-box check in §5.2) | §5.2 |
-| `capacity10m_oom128` — the probe that must OOM | **cluster pending** | §5.3 |
+| `connectivity` — k-NN component counts and the gate | **run** (dev box), 3 seeds | §2.1, §2.2 |
+| `rebuild_effort` frontier | **run** (dev box) on gist1m, glove100, manifold_mid | §1.1b |
+| FISHDBC head-to-head on one yardstick | **run** (dev box), 20 k points | §5.6 |
+| `sensitivity` re-targeted at fragmenting data, + refinement-cap sweep | **run** (dev box), 2 seeds | §5.4, §5.5 |
+| `batchsize` — amortised cost vs batch size | **run (cluster)**, 3 seeds | §1.4 |
+| `parity` — CPU vs CUDA | **run (cluster)**, 3 seeds | §5.2 |
+| `capacity10m_oom128` — the probe that must OOM | **partial** — the OOM arm landed, the `1x4` arm has not | §5.3b |
 
-> **Provenance.** The four completed runs were executed on the dev box
-> (1× RTX 4070 Ti SUPER) and written to `results_local.csv`, deliberately **not** to
-> `results.csv`, so that dev-box seconds are never pooled with the cluster timings every
-> other number in this document comes from. Their *quality* figures — component counts,
-> recall, ARI, cluster counts — are hardware-independent and are quoted directly. Their
-> wall-clock figures are labelled as dev-box wherever they appear, and the three pending
-> runs are pending precisely because their output is timing.
+> **Provenance.** The four dev-box runs (1× RTX 4070 Ti SUPER) were written to
+> `results_local.csv`, deliberately **not** to `results.csv`, so that dev-box seconds are
+> never pooled with the cluster timings every other number in this document comes from.
+> Their *quality* figures — component counts, recall, ARI, cluster counts — are
+> hardware-independent and are quoted directly. Their
+> wall-clock figures are labelled as dev-box wherever they appear. `batchsize`, `parity` and
+> the capacity probe were held for the cluster precisely because their output *is* timing,
+> and they now carry cluster numbers.
 >
 > `results_local.csv` is covered by `.gitignore` (`*.csv`), so it is not in the repository:
 > the numbers above are the record. Copy it somewhere durable if the raw rows are wanted.
+> `results.csv` (18,485 rows) is likewise gitignored and is carried between machines by
+> hand; the previous copy is kept alongside it as `results.csv.bak-YYYYMMDD`.
 
-Remaining after the cluster run: re-measure `sensitivity` timings on cluster hardware if
-its seconds are to be quoted (its recall and growth-ratio outputs are already safe), and
-decide whether to adopt the raised `refine_max_fraction` from §5.5 as the default.
+Three things remain:
+
+1. **Finish the capacity probe** — the `1x4` arm that must complete (§5.3b). Without it the
+   claim is "this configuration OOMs", not "the instance decomposition rescues it".
+2. **Re-measure `sensitivity` on cluster hardware** if its seconds are to be quoted. Its
+   recall and growth-ratio outputs are already hardware-safe, so this is optional.
+3. **Decide on `refine_max_fraction`** (§5.5). The evidence says raise it; the default is
+   left at 0.25 so the §9 reference table stays valid until the change is deliberate.
 
 ### Research directions
 
