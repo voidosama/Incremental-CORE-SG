@@ -308,17 +308,22 @@ new point and saturates a small graph — measured at 97.8 % of the graph before
 `refine_max_fraction` (default 0.25) bounds it. The set is built new points → ring 1 →
 ring 2, so the cap **drops the outermost nodes first and never sacrifices a new point**.
 
-> Two measured caveats. First, the cap is *always binding* in practice, so a reported
-> refinement fraction is reporting the ceiling rather than the algorithm's appetite.
-> Second, the cap costs quality: removing it entirely buys 0.7 points of recall on the
-> hardest fragmenting data set for 0.6 % more time, because refinement is only 3–6 % of an
-> update. Raising the default is a one-line change with evidence behind it (RESULTS.md
-> §5.5); it is left at 0.25 so the reference measurements stay valid.
+> **The default is 0.25 and every reported result uses it**, unchanged across all 18,485
+> measurements — a per-data-set setting would make it impossible to separate the method's
+> quality from a well-chosen knob.
 >
-> A related hypothesis was tested and **refuted**: that because the cap is a fraction of
-> `n`, updates cost `Θ(n)`, and an absolute ceiling would make them `Θ(batch)`. Per-batch
-> cost grows identically under both policies, so the growth comes from elsewhere (the
-> connectivity rebuild, the hubness refresh, or the budget) and is sub-linear anyway.
+> Its effect is characterised in RESULTS.md §5.5: quality is monotone in the size of the
+> refinement set, and how much that matters is a property of the data — 0.007 points of
+> recall on `fma_mfcc`, 0.72 on `manifold_wide` — while cost moves 0.6 %, because refinement
+> is only 3–6 % of an update.
+>
+> Two things there are worth knowing before changing it. **A cap expressed as a fraction of
+> `n` is `Θ(n)` per batch** whatever its constant, so this form does not preserve the
+> sublinear-update property the design targets; `refine_max_nodes` is the absolute
+> alternative and is disabled by default. And a hypothesis was **refuted**: the fractional
+> cap is *not* what makes per-batch cost grow — growth is 1.25–1.5× per graph doubling under
+> every policy, so the driver is elsewhere and is sub-linear regardless. Whether an absolute
+> ceiling holds quality as `n` grows is left open.
 
 ---
 

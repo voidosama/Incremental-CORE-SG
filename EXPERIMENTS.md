@@ -544,8 +544,11 @@ monotone in the refinement set and the shipped default is leaving some on the ta
 On the hardest fragmenting set, **removing the cap buys 0.7 points of recall for 0.6 % more
 time.** Refinement is only 3–6 % of an update, so the ceiling is protecting a cost that was
 never the bottleneck. Raising the default is a one-line change with a measured basis — and
-it closes the §5.5 open item in RESULTS.md, which had recorded the cap as always binding
-without knowing what it cost.
+it characterises the §5.5 item in RESULTS.md, which had recorded the cap as always binding
+without knowing what it cost. **Naming a new default is deliberately not done**: the sweep
+is at one `n`, every reported result in the project uses the shipped 0.25, and a cap
+expressed as a fraction of `n` has the wrong scaling shape regardless of its constant. The
+open question is the *form*, not the number — see RESULTS.md §8, research directions.
 
 ---
 

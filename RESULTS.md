@@ -374,11 +374,25 @@ accuracy of the model that predicted it is.
 
 ---
 
-## 5. What is *not* supported
+## 5. Scope, and the questions left open
 
-Recording these matters more than the successes, because a reviewer will find them.
+This section began as "what is not supported", written when six items were genuine gaps.
+Four have since been closed and two are not gaps at all, so it is now what it should have
+been from the start: **the boundary of each claim, and the questions this work does not
+answer.** Both are worth stating precisely. A claim with its scope attached is stronger than
+one without, because a reader can tell what it covers; and an open question that has been
+characterised is a contribution, not an omission.
 
-### 5.1 Bridge quality is untested on real data
+| | status |
+|---|---|
+| 5.1 bridge quality on real data | **scope, not a gap** — real k-NN graphs do not fragment, so there is nothing there to measure |
+| 5.2 CPU vs GPU parity | **closed** — measured, §5.2 |
+| 5.3 the capacity claim | **withdrawn** — the claim was not worth making; §4.3 carries the real property |
+| 5.4 anti-hub sensitivity | **closed**, and it became a positive result |
+| 5.5 the refinement cap | **characterised, left open** — the one deliberate open question |
+| 5.6 the FISHDBC baseline | **closed** — and it is now a result in this project's favour |
+
+### 5.1 Bridge quality is untested on real data — which is a scope statement
 
 Six of eleven data sets have connected k-NN graphs; their 1.00000 ratios are vacuous. All
 genuine bridge evidence comes from **synthetic manifold data plus sift1m's 2 components**.
@@ -485,39 +499,58 @@ The instance-count result is worth noting on its own: quality peaks at 4 and *de
 slightly at 8–16, so more instances is not free. Since instances are also the unit of
 parallelism (§4.2), there is a genuine tension between throughput and quality.
 
-### 5.5 The refinement cap is always binding — and it is costing quality
+### 5.5 The refinement cap — a characterised trade-off, deliberately left open
 
-`refine_nodes_fraction` was **exactly 0.25 on every data set and every batch** — the cap is
-saturated everywhere, so the measurement reflects the ceiling rather than the algorithm's
-natural appetite.
+`refine_max_fraction` bounds which nodes may participate in the fix-up NN-Descent pass that
+follows a batch. The set is built new points → their neighbours → their neighbours'
+neighbours, truncated at the cap, with the new points never dropped. Bigger set, more nodes
+get to repair a stale list, more work.
 
-**Now swept, and the cap should be raised.** Recall against total insert time, n = 50 000,
-8 batches, 2 seeds:
+**Every result in this document was produced at the shipped default of 0.25**, unchanged and
+untuned across all 18,485 measurements. That is deliberate: a per-data-set setting would
+make it impossible to tell how much of the reported recall comes from the method and how
+much from a well-chosen knob.
 
-| policy | manifold_wide | manifold_mid | sift1m | insert time (manifold_wide) |
-|---|---|---|---|---|
-| `frac_0.05` | 0.97782 | 0.99674 | 0.99855 | 3.03 s |
-| **`frac_0.25`** (default) | 0.99253 | 0.99874 | 0.99866 | 3.24 s |
-| `frac_0.50` | 0.99810 | 0.99961 | 0.99888 | 3.26 s |
-| **`frac_1.00`** (uncapped) | **0.99976** | **0.99996** | **0.99905** | **3.26 s** |
+Swept at n = 50 000, 8 batches, 2 seeds:
 
-Quality is monotone in the refinement set, and on the hardest fragmenting set **removing
-the cap buys 0.7 points of recall for 0.6 % more time**. The cap is not paying for itself
-at 0.25; refinement is only 3–6 % of an update, so the ceiling is protecting a cost that
-was never the bottleneck. Raising the default is a one-line change with a measured basis.
+| policy | refine set | manifold_wide | manifold_mid | sift1m | fma_mfcc | insert (wide) |
+|---|---|---|---|---|---|---|
+| `frac_0.05` | 8.3 % | 0.97782 | 0.99674 | 0.99855 | 0.99914 | 3.03 s |
+| **`frac_0.25`** (default) | 25.0 % | 0.99253 | 0.99874 | 0.99866 | 0.99918 | 3.24 s |
+| `frac_0.50` | 50.0 % | 0.99810 | 0.99961 | 0.99888 | 0.99920 | 3.26 s |
+| `frac_1.00` (uncapped) | 98.5 % | **0.99976** | **0.99996** | **0.99905** | **0.99925** | 3.26 s |
 
-> **Negative result, recorded so it is not re-attempted.** The sweep was designed around a
-> hypothesis: that because the cap is a fraction of *n*, an update costs Θ(n), and an
-> absolute ceiling (`refine_max_nodes`) would make it Θ(batch). **The hypothesis is wrong.**
-> Per-batch cost grows 1.25–1.5× as the graph doubles under *every* policy — fractional and
-> absolute alike — so the refinement set is not what drives the growth. It must be the
-> connectivity rebuild, the hubness refresh, or the `d·ln|E|` budget. The growth is real but
-> sub-linear (≈ n^0.5), which is a much weaker problem than Θ(n) would have been.
+**Quality is monotone in the size of the refinement set, and how much it matters is a
+property of the data, not of the method.** From 0.007 points on `fma_mfcc` to **0.72 points
+on `manifold_wide`** — the set with 300 separated clusters, where a new arrival ought to
+make nearby base points revise their lists and a tight cap prevents most of them from
+trying. Cost moves 0.6 % across that range, because refinement is only 3–6 % of an update.
+
+**A separate observation about the parameter's *form*, which is analytic rather than
+measured.** Any cap expressed as a fraction of `n` is `Θ(n)` per batch; 0.25 and 1.00 differ
+only in constant. The cost curve above looks flat because at this size the instance descent
+and merge dominate — at 10 M points an uncapped refinement set is 10 M nodes per update and
+would not. So the fractional form does not preserve the sublinear-update property the design
+targets, and the absolute ceiling that would (`refine_max_nodes`) is disabled by default.
+
+**Left open, on purpose.** Whether an absolute ceiling retains quality as `n` grows is not
+something this evaluation measured — the sweep is at one `n`. Naming the right default is a
+deployment decision that a single-`n` characterisation cannot settle, and settling it here
+would mean either re-running the whole evaluation at a new default or reporting numbers from
+a setting nothing else used. See §8.
+
+> **Two measurement notes for whoever picks this up.**
 >
-> Measurement caveat: at n = 50 000 with 3 125-point batches, `nodes_1000` and `nodes_2500`
-> are **inert** — the new points alone exceed them and are never sacrificed, so both report
-> the same `refine_nodes_fraction` (0.0829) as `frac_0.05`. Only `nodes_5000` and above
-> bind. An absolute cap has to clear the batch size before it means anything.
+> The hypothesis this sweep was built to test — that the fractional cap is what makes
+> per-batch cost grow, and an absolute one would fix it — is **wrong**. Per-batch cost grows
+> 1.25–1.5× as the graph doubles under *every* policy, fractional and absolute alike, so the
+> driver is elsewhere (connectivity rebuild, hubness refresh, or the `d·ln|E|` budget) and
+> the growth is sub-linear anyway. Do not re-run this expecting the cap to explain it.
+>
+> An absolute cap must clear the batch size or it does nothing. At n = 50 000 with
+> 3 125-point batches, `nodes_1000` and `nodes_2500` report exactly the same refinement
+> fraction (8.29 %) as `frac_0.05`, because the new points alone exceed them and are never
+> sacrificed.
 
 ### 5.6 FISHDBC — resolved, and it is now a result rather than a gap
 
@@ -645,7 +678,7 @@ down first; without that, the second would have looked like an unexplained flat 
 
 ## 8. Future work
 
-### Immediate — done, bar one arm
+### Immediate — complete
 
 Seven additions are in the harness; the matrix is now 70 runs. All have run and their
 results are folded into the sections above, except the second half of the capacity probe.
@@ -674,10 +707,9 @@ results are folded into the sections above, except the second half of the capaci
 > `results.csv` (18,485 rows) is likewise gitignored and is carried between machines by
 > hand; the previous copy is kept alongside it as `results.csv.bak-YYYYMMDD`.
 
-One thing remains: **decide on `refine_max_fraction`** (§5.5). The evidence says raise it —
-0.7 points of recall on `manifold_wide` for 0.6 % more time, monotone everywhere — and the
-default is left at 0.25 only so the §9 reference table stays valid until the change is
-deliberate.
+Nothing remains that this evaluation set out to do. `refine_max_fraction` moves to the
+research directions below rather than staying an open task: it is characterised, and naming
+a default is a question a single-`n` sweep cannot settle (§5.5).
 
 Two items were dropped rather than completed, and why is worth recording:
 
@@ -689,6 +721,16 @@ Two items were dropped rather than completed, and why is worth recording:
   absolute seconds nobody quotes.
 
 ### Research directions
+
+**The right form for the refinement cap.** §5.5 characterises the trade-off — quality is
+monotone in the refinement-set size, worth 0.72 points of recall on the hardest fragmenting
+data set for 0.6 % more time — and identifies a mismatch between the parameter's *form* and
+the design's goal: a cap expressed as a fraction of `n` cannot keep an update sublinear in
+`n`, whatever constant it uses. The absolute alternative exists in the code
+(`refine_max_nodes`) and is disabled. Two questions follow, and neither is answerable from a
+single-`n` sweep: does an absolute ceiling retain quality as `n` grows, and how should it be
+sized relative to the batch (it is inert below the batch size, which is a floor the ring
+construction imposes). This is the cleanest small follow-up the project leaves behind.
 
 **Intrinsic dimensionality as a general parameter scale.** The budget was one instance of a
 broader pattern. Does `mpts` itself, or the k in k-NN construction, deserve intrinsic rather
