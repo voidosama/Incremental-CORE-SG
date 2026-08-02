@@ -238,21 +238,31 @@ own `cluster()` calls on its MST**; and scores both against one per-batch refere
 only thing that differs between the two rows is the MST each method produced, which is the
 thing under test. Rows join on `(dataset, seed, batch)`.
 
-Verified end to end (`manifold_mid`, 3 000 points, 4 batches, mpts = 10, dev box):
+Measured, 20 000 points, 8 batches, mpts = 10, 2 seeds:
 
-| batch | n | CORE-SG ARI | FISHDBC ARI | clusters found (both) | reference clusters |
-|---|---|---|---|---|---|
-| 1 | 1 875 | 0.5870 | 0.5985 | 99 | 120 |
-| 2 | 2 250 | 0.8501 | 0.8608 | 134 | 143 |
-| 3 | 2 625 | **1.0000** | **1.0000** | 149 | 149 |
-| 4 | 3 000 | **1.0000** | **1.0000** | 149 | 150 |
+| data set | CORE-SG | FISHDBC | margin |
+|---|---|---|---|
+| manifold_mid | **1.0000** at all 8 batches | 0.9925 – 0.9962 | +0.004 … +0.008 |
+| sift1m | 0.9920 – 0.9980 | 0.9745 – 0.9855 | +0.009 … +0.022 |
+| ~~fma_mfcc~~ | 0.9740 → 0.0976 | 0.9717 → 0.0943 | +0.000 … +0.014 |
 
-The two methods track each other to within 0.012 ARI and both reach 1.0000 by batch 3. The
-early ramp is the legitimate one already documented above — the *reference itself* only
-finds 120 of the eventual 150 clusters at batch 1, because clusters below
-`min_cluster_size` are not yet detectable — and the `reference_clusters` column carries it.
-Note that both methods find the *same* 99 and 134 clusters where they both differ from the
-reference, i.e. they agree with each other more closely than either agrees with it.
+**CORE-SG is ahead on every batch of every data set**, and recovers the reference clustering
+exactly at every point of the `manifold_mid` stream.
+
+> **Drop `fma_mfcc` from this comparison.** Its reference finds only 2 clusters until batch
+> 5, then 4, 13 and 17, and both methods' ARI collapses from ~0.97 to ~0.09 as it
+> destabilises — exact HDBSCAN\* at mpts = 10 sees essentially no density structure in that
+> data. The two methods still agree with *each other* to within 0.014 throughout, which is
+> the real signal, but the data set cannot support a quality claim in either direction. Pick
+> the mpts against the data's actual structure before reading an ARI from it.
+
+> **Cost: compare the slope, and only the slope.** Per-batch insert is 0.11–0.17 s for
+> CORE-SG against 1.2–3.9 s for FISHDBC, and that ratio is overwhelmingly C++/CUDA against
+> single-threaded Python. As the graph doubled, per-batch cost grew **1.10–1.27× for CORE-SG
+> and 0.93–1.17× for FISHDBC** — comparable, with a slight structural edge to FISHDBC, whose
+> HNSW insertion is O(log n) per point. An earlier 2 500-point run suggested a much worse
+> divergence; that was batch-1 warm-up dominating a tiny run, and it did not survive scale.
+> Small-n slope estimates are not trustworthy.
 
 > **A forest cannot be extracted.** `hdbscan_labels_from_mst` refuses unless the MST has
 > exactly n−1 edges. Extraction on a disconnected graph silently produces a malformed
@@ -316,23 +326,27 @@ Rather than hand-tune one matched configuration, the rebuild's descent effort is
 the whole **(cost, recall) frontier** is emitted, so the incremental point can be read
 against the rebuild curve at equal cost. `refine_rounds` and `distance_evals` are recorded
 alongside, because a flat frontier has two different meanings and only those columns
-separate them. Measured on `manifold_mid` (n = 100 k, 1 seed, dev box):
+separate them. Measured, 2 seeds, dev box (seconds are dev-box, recall is not):
 
-| arm | seconds | recall |
-|---|---|---|
-| rebuild, baseline | 2.13 | 0.99615 |
-| rebuild, `iters_x2` | 1.83 | 0.99600 |
-| rebuild, `iters_x4` | 1.68 | 0.99606 |
-| rebuild, `sample_x2` | 2.10 | **0.99840** |
-| rebuild, `iters_x2_sample_x2` | 2.31 | **0.99853** |
-| **incremental** | 5.74 | **0.99942** |
+| data set | rebuild baseline | best tuned rebuild | incremental | margin over tuned |
+|---|---|---|---|---|
+| gist1m | 0.88852 (4.77 s) | 0.94190 (4.20 s) | **0.97723** (11.90 s) | **+3.5 pts** |
+| glove100 | 0.77413 (2.46 s) | 0.83441 (3.04 s) | **0.90451** (9.57 s) | **+7.0 pts** |
+| manifold_mid | 0.99615 (2.13 s) | 0.99853 (2.31 s) | **0.99942** (5.74 s) | +0.09 pts |
 
-Two things follow, and both belong in the paper. **More iterations buy nothing** — the
-descent has already converged, `delta` early-stops at the same 4 rounds and `distance_evals`
-moves 0.02 %. **More sampling does help**, and nearly for free in wall-clock. So the
-honest framing is not "incremental beats a rebuild" but: *a better-tuned rebuild closes
-most of the gap, and the residue (0.99942 vs 0.99853) costs 2.5×.* Reporting the naive
-comparison alone would have overstated the result.
+**More iterations buy nothing.** On gist1m `iters_x2` and `iters_x4` return *bit-identical*
+distance-evaluation counts (222.5 M) — `delta` early-stops at the same round either way, so
+a single descent is not short of time, it has reached a fixed point of the local join.
+**More sampling does help** (0.88852 → 0.93871), because widening the candidate list changes
+which pairs get compared at all.
+
+**Run it on the hard data sets, not the easy one.** On `manifold_mid` tuning nearly closes
+the gap, and an evaluation that stopped there would have concluded the claim mostly
+dissolves. It does not: on gist1m and glove100 tuning recovers 5.3 of 8.9 and 6.0 of 13.0
+points respectively, leaving 3.5 and 7.0. The claim to make is therefore *"incremental
+construction beats a compute-matched rebuild on data where a single descent struggles, and
+the margin grows with the difficulty of the k-NN problem"* — which is both defensible and
+stronger than the raw margin, because it says something about why.
 
 ### `arrival` — robustness
 The same experiment with data arriving **grouped by region** instead of shuffled, which is
@@ -365,8 +379,10 @@ Component count of the k-NN graph **alone**, at full scale, plus a sweep over k.
 > "manifold_wide fragments into 273 components" came from the data-set design table rather
 > than from `results.csv` (the string `273` does not appear in it).
 >
-> Measured here directly, `manifold_wide` at n=100 000, k=24 has **257** components in its
-> k-NN half. The claim survives; it is now a measurement.
+> Measured here directly over 3 seeds, `manifold_wide` at n=100 000, k=24 has **271**
+> components in its k-NN half — the design figure was right to within the seed spread. The
+> claim survives; it is now a measurement. Note the spread is ±20 across seeds, so quote the
+> band rather than a point estimate (an earlier single-seed check read 257).
 
 Three arms, and the second pair is the one that could have bitten:
 
@@ -380,21 +396,35 @@ Every fragmenting component count quoted elsewhere in this project was measured 
 **exact** k-NN half. It was reasonable to worry that NN-Descent's residual errors would be
 long cross-cluster edges and would quietly *connect* a graph the exact k-NN leaves in
 pieces, which would mean the bridge evidence was measured in an easier regime than the one
-it ships in. **Measured: the opposite.** On `manifold_c24` the exact half gives 24
-components and the approximate half gives 26–27 — approximation fragments *more*, because
-NN-Descent's misses remove edges while its errors stay local (it finds near neighbours, not
-distant ones). The approximate regime is therefore the harder one, and the evidence is
-conservative rather than flattered. Worth one sentence in the write-up; it is the first
-thing a careful reader will wonder about.
+it ships in.
+
+**Measured: it does not, at the k this project uses — but the effect is k-dependent and the
+claim has to be stated narrowly.** On `manifold_c24` the exact half gives 24 components and
+the approximate half gives 24–28 across k ∈ [4, 64]: approximation fragments the same or
+slightly *more*, because a missed neighbour removes an edge while a substituted one stays
+local. It reverses once k is large relative to the cluster: `manifold_c32` at k=64, with
+125 points per cluster, gives **30** approximate against **32** exact — there the
+approximate graph really is making cross-cluster errors. Both mechanisms exist. Say *"at
+k = 24–32, approximating the half does not mask fragmentation"*, not something general
+about which way it cuts.
+
+> **Do not read the `exact_matched` arm for `manifold_mid` / `manifold_wide`.** Those two
+> are designed at n = 100 000, and the exact arm runs at `exact_limit` = 4 000, where
+> `manifold_wide` has 13 points per cluster and therefore connects at k = 24 by construction
+> (300 → 4 → 1). That is the §4.3 sizing rule, not a result. The arm is only meaningful for
+> `manifold_exact`, `c8`, `c24` and `c32`, which were sized for n = 4 000.
 
 The k sweep turns the project's most transferable observation — real k-NN graphs are
-usually already connected — from a single-k assertion into a curve: the k at which each
-data set connects.
+usually already connected — from a single-k assertion into a curve. Measured (approximate
+half, full n, 3 seeds), **every real data set connects at k ≤ 24**: 20NG at k ≤ 4, GloVe and
+SIFT at k = 8, both FMA variants at k = 16, GIST at k = 24. The suite operates at k = 24–32,
+just above the threshold on the worst of them.
 
 It also prices the **connectivity gate**. `components_seconds` is the union-find pass that
 derives the labelling, i.e. what the check costs; the `gate` arm's `bridge_seconds` plus
-`hubness_seconds` is what the check would let you skip. On `manifold_wide`: **1.4 ms
-against 115 ms**, the latter being 9.3 % of build time.
+`hubness_seconds` is what the check would let you skip. Across all 13 data sets:
+**0.08–3.5 ms against 5.3–222 ms**, a ratio of 48× to 136×, with the bridge half at
+3.2–20.7 % of build time.
 
 > **Second trap, smaller.** Do not quote `repair_seconds` as the cost of the check. It is
 > only the fold-in of the bridges on top of an *already valid* labelling — single-digit
@@ -470,17 +500,35 @@ graph doubles from n/2 to n). **~1.0 means Θ(batch); ~2.0 means Θ(n).**
 > bind on the rings when the batch is small, so this sweep runs the realistic shape: many
 > small batches.
 
-> **Sizing trap for the absolute arms.** `nodes_*` is absolute, so what it *means* depends
-> on the data set. At n = 4 000 a 5 000-node ceiling is simply "no cap", and every arm
-> collapses to the same measurement — the dev-box check on `manifold_c24` gave a growth
-> ratio of 0.74–0.81 for **every** policy, fractional and absolute alike, because at that
-> size the first batch's warm-up dominates and no cap binds. The discriminating measurement
-> needs the n = 50 000 data sets, where 2 500 nodes is 5 % of the graph. Do not read the
-> small-n run as evidence either way.
+> **Negative result. The hypothesis above is wrong; do not re-test it without new
+> information.** Measured at n = 50 000 over 8 batches, per-batch cost grows **1.25–1.5× as
+> the graph doubles under every policy** — fractional and absolute alike. The refinement set
+> is therefore *not* what drives the growth; the remaining candidates are the connectivity
+> rebuild (O(n·k)), the hubness refresh, and the `d·ln|E|` budget itself. The growth is real
+> but sub-linear (≈ n^0.5), which is a far weaker problem than Θ(n) would have been, and it
+> is not fixable at this knob.
 
-Fractional arms on `manifold_c24` behave monotonically once the shape is right — 0.05 →
-recall 0.99895, 0.25 → 0.99938, 1.0 → 1.00000 — while total insert time stays flat at
-0.44–0.47 s, i.e. **relaxing the cap is nearly free** at that size.
+> **Sizing trap for the absolute arms.** `nodes_*` is absolute, so what it *means* depends
+> on n *and on the batch size*. At n = 50 000 with 3 125-point batches, `nodes_1000` and
+> `nodes_2500` are **inert** — the new points alone exceed them and are never sacrificed, so
+> both report exactly the same `refine_nodes_fraction` (0.0829) as `frac_0.05`. Only
+> `nodes_5000` and above bind. An absolute cap must clear the batch size before it means
+> anything. (At n = 4 000 the problem is worse still: every arm collapses to "no cap".)
+
+**What the sweep did establish, and it is worth more than the hypothesis was.** Quality is
+monotone in the refinement set and the shipped default is leaving some on the table:
+
+| policy | manifold_wide | manifold_mid | sift1m | insert (manifold_wide) |
+|---|---|---|---|---|
+| `frac_0.05` | 0.97782 | 0.99674 | 0.99855 | 3.03 s |
+| **`frac_0.25`** (default) | 0.99253 | 0.99874 | 0.99866 | 3.24 s |
+| `frac_1.00` (uncapped) | **0.99976** | **0.99996** | **0.99905** | **3.26 s** |
+
+On the hardest fragmenting set, **removing the cap buys 0.7 points of recall for 0.6 % more
+time.** Refinement is only 3–6 % of an update, so the ceiling is protecting a cost that was
+never the bottleneck. Raising the default is a one-line change with a measured basis — and
+it closes the §5.5 open item in RESULTS.md, which had recorded the cap as always binding
+without knowing what it cost.
 
 ---
 
@@ -673,15 +721,18 @@ Recorded so drift in the routine is detectable. Dev box: RTX 4070 Ti SUPER, CUDA
 
 ## 10. Open gaps
 
-1. **The head-to-head against FISHDBC is verified end to end but not run across the
-   matrix** — only a 3 000-point run on `manifold_mid` (§5). It is single-threaded Python
-   *and* the per-batch reference is O(n²), so keep `--limit` modest (20 k or below).
-2. **The six new/changed experiments have been smoke-tested on the dev box, not swept.**
-   `connectivity`, `batchsize`, `parity`, the `rebuild_effort` frontier, the re-targeted
-   `sensitivity` sweep and the `capacity10m_oom128` probe are all in the matrix (70 runs)
-   and none of their numbers are in `results.csv` yet. Every figure quoted for them in this
-   file is a single-seed dev-box measurement, recorded so a cluster run can be checked
-   against it — not a result.
+1. **Four of the six additions have been run on the dev box, three remain.** `connectivity`
+   (3 seeds), the `rebuild_effort` frontier, the FISHDBC head-to-head at 20 k, and the
+   re-targeted `sensitivity` sweep are done; their figures appear throughout this file and
+   in RESULTS.md. `batchsize`, `parity` and `capacity10m_oom128` are pending, and they are
+   pending on purpose — their entire output is timing, and every second in `results.csv`
+   comes from the cluster.
+2. **Dev-box rows live in `results_local.csv`, never in `results.csv`.** Pooling 4070 Ti
+   SUPER seconds with 2080 SUPER seconds in one `groupby` is exactly the class of error
+   §12 exists to prevent, and the CSV has no machine column to catch it. Quality columns —
+   component counts, recall, ARI, cluster counts, and *ratios* of two timings on the same
+   machine — are hardware-independent and safe to quote. `results_local.csv` is gitignored,
+   so the numbers written into these documents are the durable record.
 3. **`capacity10m` at k=128 is the run that decides the capacity claim.** At k=64 the
    `insert` path builds base + batch = 6.25 M points per instance, needing 4.94 GiB, which
    fits an 8 GB card comfortably — so the intended configuration was never constructed and
