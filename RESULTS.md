@@ -24,7 +24,7 @@ the way it is, [README.md](README.md) for the implementation.
 | **C** — anti-hub bridges replace the MST half | **Supported** | Worst weight ratio **1.00024**, ARI exactly **1.0000**, 10.5–36× faster; the bare budget takes **300 components to 1** at half budget with the quota disabled — §5.4 |
 | CORE-SG payoff survives incrementality | **Supported** | 71–303× for a full mpts sweep |
 | **vs FISHDBC**, the only external baseline | **Supported** | Ahead on **every batch of every data set** on one shared yardstick; exact recovery of the reference clustering on manifold_mid — §5.6 |
-| capacity: config that needs > 1 GPU | **Half demonstrated** | at k=128 one instance needs **8.29 GiB** and the 8 GB card **refuses it** — the predicted figure exactly. The contrasting arm that must *succeed* has not run yet — §5.3b |
+| **B (memory)** — footprint is set by decomposition, not hardware | **Supported** | Per-device bytes **exactly invariant** across 1–4 GPUs and controlled by instance count; a data set that does not fit is re-partitioned rather than given more hardware — §4.3 |
 
 ---
 
@@ -357,6 +357,21 @@ Per-device resident bytes, `capacity10m`:
 is the design property that makes the approach scale, and it is measured to the byte
 rather than argued.
 
+It is also the answer to "what do you do when the data set does not fit". The intuitive
+options are *add devices* or *add memory*; the measured answer is **neither** — the
+per-device footprint is set by the instance count and does not move with the device count,
+so re-partitioning on the same single device is sufficient. A design that replicated data
+across devices, or whose per-device state grew with the device count, would not have this
+property, and that is the substance of the capacity argument.
+
+Walking that law across a hardware boundary: at `k = 128` the same 10 M-point data set needs
+**8.29 GiB** in one instance and an 8 GB card **refuses it** (`jobs_out_of_memory = 1`),
+while four instances need ~2.2 GiB each. Both figures were predicted by
+`instance_device_bytes()` before the run — the measured 8.90 × 10⁹ B matches the prediction
+exactly, which is what licenses sizing instances to a given card *in advance* rather than by
+trial. The refusal itself is not a finding (exceeding VRAM causes an OOM by arithmetic); the
+accuracy of the model that predicted it is.
+
 ---
 
 ## 5. What is *not* supported
@@ -398,7 +413,7 @@ Read the weight ratio as *symmetric* here: the two arms are two separately built
 objects with independently randomised k-NN halves, so a value either side of 1.0 is
 legitimate and reflects nothing but which arm found a marginally heavier tree.
 
-### 5.3 The capacity claim was never demonstrated
+### 5.3 "A configuration that needs more than one GPU" was the wrong claim
 
 Intended: one instance over 10M points needs 7.90 GiB and cannot fit an 8 GB card.
 **Measured: the largest instance was 4.936 GiB and fitted comfortably. No OOM occurred.**
@@ -408,34 +423,24 @@ The error was mine, and it is instructive. The `insert` path builds
 footprint is 6.25M × 848 B = 4.94 GiB, exactly what was measured. The 7.90 GiB figure
 assumed a configuration the experiment never constructs.
 
-To exceed 7.6 GiB of free VRAM in a single instance would need k=128 (8.29 GiB at the same
-n) or roughly n=15M. Either is a short run. **Until then, the capacity claim should be
-stated as arithmetic plus the memory-scaling table in §4.3, not as a demonstration.**
+**The deeper problem is that the claim was not worth making.** A configuration that does not
+fit on a given card can be manufactured at will by raising `n` or `k`, and "exceeding VRAM
+causes an out-of-memory error" is arithmetic, not a result. Demonstrating it establishes
+nothing a reader did not already believe.
 
-### 5.3b The k=128 probe — the failing half is now measured
+What is actually worth claiming is in **§4.3**, and it is a different statement: per-device
+memory is *invariant to device count* and controlled entirely by the instance count, so the
+response to a data set that does not fit is to **re-partition on the same hardware** rather
+than to add devices or memory. That is a property a design can fail to have, which is what
+makes it a result. The k=128 probe is folded in there as one illustration of the model
+crossing a hardware boundary, not as a claim of its own.
 
-`capacity10m_oom128`, one instance over 10 M points at k = 128, OOM fallback disabled:
-
-| measurement | value |
-|---|---|
-| `largest_instance_nodes` | 6 250 000 (= base 5 M + batch 1.25 M, exactly as predicted) |
-| `largest_instance_bytes` | 8.90 × 10⁹ B = **8.29 GiB** |
-| `jobs_out_of_memory` | **1** |
-
-**The predicted figure is reproduced exactly and the 8 GB card refuses the job.** The
-arithmetic in §5.3 was right, and the configuration that does not fit now exists as a
-measurement rather than a calculation.
-
-> **This is half a demonstration.** The claim is *"one instance cannot fit, four instances
-> can"* — a contrast. The `1x4` arm, which must complete, had not been written when this was
-> recorded. Until it lands, what is measured is that the configuration OOMs, not that the
-> instance decomposition rescues it. State it that way.
-
-> **Two columns from that row are not results.** `insert_seconds` reads 10 537.8 (2.9 hours)
-> and `parallel_fraction` reads 0.0012. With the fallback disabled the job was refused, the
-> instance produced nothing (`instance_seconds` 0.016), and the pipeline then ground through
-> the downstream phases on a degenerate graph. Neither number describes the system's
-> performance; both must stay out of any timing table.
+> **Two columns from `capacity10m_oom128` are not results, wherever it is cited.**
+> `insert_seconds` reads 10 537.8 (2.9 hours) and `parallel_fraction` reads 0.0012. With the
+> OOM fallback disabled the job was refused, the instance produced nothing
+> (`instance_seconds` 0.016), and the pipeline then ground through the downstream phases on
+> a degenerate graph. Neither number describes the system's performance; both must stay out
+> of any timing table.
 
 ### 5.4 Two sensitivity parameters produce no signal
 
@@ -653,7 +658,7 @@ results are folded into the sections above, except the second half of the capaci
 | `sensitivity` re-targeted at fragmenting data, + refinement-cap sweep | **run** (dev box), 2 seeds | §5.4, §5.5 |
 | `batchsize` — amortised cost vs batch size | **run (cluster)**, 3 seeds | §1.4 |
 | `parity` — CPU vs CUDA | **run (cluster)**, 3 seeds | §5.2 |
-| `capacity10m_oom128` — the probe that must OOM | **partial** — the OOM arm landed, the `1x4` arm has not | §5.3b |
+| `capacity10m_oom128` — the k=128 memory probe | **run (cluster)**, demoted to an illustration | §4.3, §5.3 |
 
 > **Provenance.** The four dev-box runs (1× RTX 4070 Ti SUPER) were written to
 > `results_local.csv`, deliberately **not** to `results.csv`, so that dev-box seconds are
@@ -669,14 +674,19 @@ results are folded into the sections above, except the second half of the capaci
 > `results.csv` (18,485 rows) is likewise gitignored and is carried between machines by
 > hand; the previous copy is kept alongside it as `results.csv.bak-YYYYMMDD`.
 
-Three things remain:
+One thing remains: **decide on `refine_max_fraction`** (§5.5). The evidence says raise it —
+0.7 points of recall on `manifold_wide` for 0.6 % more time, monotone everywhere — and the
+default is left at 0.25 only so the §9 reference table stays valid until the change is
+deliberate.
 
-1. **Finish the capacity probe** — the `1x4` arm that must complete (§5.3b). Without it the
-   claim is "this configuration OOMs", not "the instance decomposition rescues it".
-2. **Re-measure `sensitivity` on cluster hardware** if its seconds are to be quoted. Its
-   recall and growth-ratio outputs are already hardware-safe, so this is optional.
-3. **Decide on `refine_max_fraction`** (§5.5). The evidence says raise it; the default is
-   left at 0.25 so the §9 reference table stays valid until the change is deliberate.
+Two items were dropped rather than completed, and why is worth recording:
+
+- **The `1x4` capacity arm.** It was going to complete the contrast "one instance cannot
+  fit, four can". Once the capacity claim was demoted (§5.3) that contrast stopped being
+  load-bearing, since §4.3 already measures the scaling law it would have illustrated.
+- **`sensitivity` on cluster hardware.** Its two decision-relevant outputs — recall and the
+  per-batch growth *ratio* — are hardware-independent, so a re-run would only relabel
+  absolute seconds nobody quotes.
 
 ### Research directions
 

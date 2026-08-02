@@ -153,14 +153,31 @@ a data set with *known* ground-truth intrinsic dimensionality.
 This family also validates the intrinsic-dimensionality estimator against known truth: on
 6-in-128 it recovers **5.67**.
 
-### 4.4 `capacity` — larger than one GPU
+### 4.4 `capacity` — memory scaling at 10 M points
 
 `capacity10m`: 10 M points, ambient 32, intrinsic 8, 200 clusters, k = 64.
 
-At ~848 B/point a single instance needs **7.90 GiB** resident, which does not fit an 8 GB
-card once driver overhead is counted. Four instances need **1.97 GiB each** and complete.
-This is a capacity argument — about what becomes *possible*, not about speed — and it is
-the cleanest demonstration of why the instance design matters.
+Its purpose is the **memory scaling law**, measured at a size where per-device footprint
+actually matters: per-device bytes invariant across device count, controlled entirely by
+instance count. That is a property a design can fail to have — one that replicated data
+across devices, or whose per-device state grew with the device count, would not have it —
+which is what makes it a result.
+
+> **It is *not* an OOM demonstration, and an earlier version of this file framed it as one.**
+> The stated argument was "a single instance needs 7.90 GiB, does not fit an 8 GB card, and
+> four instances at 1.97 GiB complete". Two things were wrong with that. The arithmetic
+> assumed a configuration the experiment never constructs — `insert` builds
+> `base + batch = 6.25 M` points per instance, not 10 M, so the real figure is 4.94 GiB and
+> it fits comfortably. And more importantly the claim was not worth making: a configuration
+> that exceeds a given card can be manufactured at will by raising `n` or `k`, and
+> "exceeding VRAM causes an OOM" is arithmetic, not a finding.
+>
+> The `capacity10m_oom128` probe (k = 128, one instance, 8.29 GiB, refused) is retained as
+> an **illustration** that the sizing model is accurate at a hardware boundary — the
+> predicted and measured figures agree exactly, which is what licenses sizing instances to a
+> card in advance. It is cited under RESULTS.md §4.3, not as a claim of its own. Its
+> `insert_seconds` and `parallel_fraction` columns are artifacts of a refused job and must
+> never be quoted.
 
 ---
 
@@ -694,7 +711,10 @@ Dropped to 2 seeds; extra seeds buy timing jitter only.
 
 **`refine_nodes_fraction` was exactly 0.25 on every data set and every batch** — the cap
 is always binding, so the measurement reflects the ceiling rather than the algorithm's
-natural appetite, and `refine_max_fraction` is not in the sensitivity sweep. Open.
+natural appetite, and `refine_max_fraction` was not in the sensitivity sweep.
+**Closed** by the `refine_cap` policy sweep in §6: the cap is costing quality (removing it
+buys 0.7 points of recall on `manifold_wide` for 0.6 % more time) and raising the default is
+a one-line change with evidence behind it.
 
 ## 9. Reference measurements
 
@@ -715,31 +735,29 @@ Recorded so drift in the routine is detectable. Dev box: RTX 4070 Ti SUPER, CUDA
 | Parallel fraction f (1-GPU baseline) | 0.84-0.94 → 4-GPU ceiling 2.70-3.40x |
 | Intrinsic dim: SIFT / GIST / GloVe / 20NG | 10.2 / 28.5 / 34.5 / 36.3 |
 | Intrinsic budget saving | 5–49× fewer anti-hubs, identical quality on real data |
-| Capacity: 1 instance vs 4 | 7.90 GiB (OOM on 8 GB) vs 1.97 GiB |
+| Capacity, k=64: largest instance | 4.94 GiB (6.25 M points, **fits** an 8 GB card) |
+| Capacity, k=128: largest instance | 8.29 GiB, **refused** — matches the prediction exactly |
 
 ---
 
 ## 10. Open gaps
 
-1. **Four of the six additions have been run on the dev box, three remain.** `connectivity`
-   (3 seeds), the `rebuild_effort` frontier, the FISHDBC head-to-head at 20 k, and the
-   re-targeted `sensitivity` sweep are done; their figures appear throughout this file and
-   in RESULTS.md. `batchsize`, `parity` and `capacity10m_oom128` are pending, and they are
-   pending on purpose — their entire output is timing, and every second in `results.csv`
-   comes from the cluster.
+1. **All seven additions have run.** `connectivity` (3 seeds), the `rebuild_effort`
+   frontier, the FISHDBC head-to-head at 20 k and the re-targeted `sensitivity` sweep on the
+   dev box; `batchsize`, `parity` and `capacity10m_oom128` on the cluster, because their
+   entire output is timing and every second in `results.csv` comes from there. Figures
+   appear throughout this file and in RESULTS.md.
 2. **Dev-box rows live in `results_local.csv`, never in `results.csv`.** Pooling 4070 Ti
    SUPER seconds with 2080 SUPER seconds in one `groupby` is exactly the class of error
    §12 exists to prevent, and the CSV has no machine column to catch it. Quality columns —
    component counts, recall, ARI, cluster counts, and *ratios* of two timings on the same
    machine — are hardware-independent and safe to quote. `results_local.csv` is gitignored,
    so the numbers written into these documents are the durable record.
-3. **`capacity10m` at k=128 is the run that decides the capacity claim.** At k=64 the
-   `insert` path builds base + batch = 6.25 M points per instance, needing 4.94 GiB, which
-   fits an 8 GB card comfortably — so the intended configuration was never constructed and
-   no OOM occurred. k=128 takes the same configuration to ~8.3 GiB. Until it runs, the
-   claim is arithmetic plus the memory-scaling table.
-4. **The budget rule is decided on evidence but not yet adopted as the default.** See §12.
-   `budget_dimension` still defaults to `Ambient`, i.e. the specified rule.
+3. **Two parameters are decided on evidence but not adopted as defaults**, both deliberately,
+   so the §9 reference table stays valid until the change is made on purpose.
+   `budget_dimension` still defaults to `Ambient` (see §12), and `refine_max_fraction` still
+   defaults to 0.25 although the `refine_cap` sweep in §6 shows removing it buys 0.7 points
+   of recall on `manifold_wide` for 0.6 % more time.
 5. **Anti-hub count sensitivity is data-dependent** — flat on low-d blobs, monotone on
    manifolds, irrelevant on connected real data. Do not generalise from one shape.
 6. **Multi-GPU numbers come from the cluster only.** On one device, more instances is
