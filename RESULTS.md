@@ -152,10 +152,12 @@ The practical reading: batch up to ~10–25 % of the graph if latency allows, be
 where an update is effectively free.
 
 **Where the money goes.** The share of update time in phases that do not shrink with the
-batch — hubness refresh, bridge MST, connectivity — rises from **8.6–8.9 % at 25 % batches
-to 24.6–28.1 % at 0.1 %**. That is the amortisation story made concrete, and it is the
-mechanism behind the cost curve above: those three phases run once per insert however few
-points arrived.
+batch — hubness refresh, bridge MST, connectivity — rises from **8.6–14.0 % at 25 % batches
+to 24.6–28.1 % at 0.1 %**, across all four data sets. (`manifold_c24` sits at the top of
+both ranges; the other three are 8.6–8.9 % → 24.6–26.2 %, which is the range quoted in the
+paper's Fig. 4, where only those three are plotted.) That is the amortisation story made
+concrete, and it is the mechanism behind the cost curve above: those three phases run once
+per insert however few points arrived.
 
 > **Scale matters for seeing this.** The same experiment on the dev box at n = 4 000 showed
 > the fixed share flat at ~5 % with no trend at all. The effect only appears once the graph

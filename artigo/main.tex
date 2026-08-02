@@ -219,9 +219,7 @@ the live graph, bounds the reverse-neighbour cache, and removes the barrier
 inside a round, which makes it amenable to lock-free parallel execution. Neither
 is incremental in the sense required here: both refine a whole graph in place, so
 inserting a batch either leaves the new points without the neighbourhood
-structure the descent needs, or costs $O(n)$ per batch. Merging independently
-constructed $k$-NN graphs has been studied separately~\cite{knn_merge}; our merge
-step exploits the same idempotence of top-$k$ insertion.
+structure the descent needs, or costs $O(n)$ per batch.
 
 \subsection{Incremental and streaming density-based clustering}
 
@@ -233,18 +231,34 @@ natural baseline. It approximates HDBSCAN* for a \emph{single} $\mpts$; the
 multiple-$\mpts$ capability that CORE-SG exists to provide has no equivalent
 there. I-HASTREAM~\cite{ihastream} maintains a hierarchy over micro-clusters, a
 different granularity, as do summarisation approaches such as Data
-Bubbles~\cite{databubbles} and BIRCH-derived methods~\cite{birch}. Distributed
-batch constructions~\cite{mrhdbscan} address scale but not incrementality.
-General dynamic MST maintenance~\cite{mst_maintenance} is well studied; we
-discuss in Section~\ref{sec:bridges} why we avoid it rather than adopt it.
+Bubbles~\cite{databubbles} and BIRCH-derived methods~\cite{birch}. Zubaro\u{g}lu
+and Atalay~\cite{streamreview} survey the wider stream-clustering field.
+
+Closest to our $k$-NN half is the work of Zhao et al.~\cite{knn_merge} on merging
+$k$-NN graphs, which also supports expanding an existing graph with a raw data
+set and therefore addresses incremental construction directly. Our merge step
+relies on the same idempotence of top-$k$ insertion; the difference is that we
+decompose an \emph{update} into independent instances in order to bound
+per-device memory, rather than combining independently built graphs.
+
+On scale rather than incrementality, distributed batch
+constructions~\cite{mrhdbscan} parallelise HDBSCAN* over MapReduce, McInnes and
+Healy~\cite{acceleratedhdbscan} accelerate it via spatial indexing, and
+Gowanlock~\cite{bpshdbscan} reaches billion-point DBSCAN with a hybrid CPU/GPU
+scheme. None of these maintains a structure under insertion, and none serves a
+range of $\mpts$ from a single graph. General dynamic MST
+maintenance~\cite{mst_maintenance} is well studied; we discuss in
+Section~\ref{sec:bridges} why we avoid it rather than adopt it.
 
 \subsection{Hubness}
 
 The asymmetry of the $k$-NN relation in high dimensions---some points appear in
 many neighbour lists, others in few---is a well-documented
-phenomenon~\cite{hubs}, usually studied as a problem. We use it constructively:
-the \emph{low} end of the reverse-degree distribution, normalised locally,
-identifies region borders, which is where the edges we need originate.
+phenomenon~\cite{hubs}, usually studied as a problem. The reverse quantity has
+been used for influence analysis~\cite{influencesets} and supported by dedicated
+index structures~\cite{rdnntree}. We use it constructively: the \emph{low} end of
+the reverse-degree distribution, normalised locally, identifies region borders,
+which is where the edges we need originate.
 
 % ===========================================================================
 \section{Method}
@@ -441,8 +455,11 @@ Section~\ref{sec:connectivity}: no real data set we examined produces a
 fragmented $k$-NN graph, so none of them can exercise the bridges at all.
 
 \begin{table}[!t]
-\caption{Data sets. Components are of the $k$-NN half alone at the operating
-$\kmax$, measured (Section~\ref{sec:connectivity}).}
+\caption{Data sets. ``comp.'' is the number of components of the $k$-NN half
+alone at the operating $\kmax$ (Section~\ref{sec:connectivity}), measured with an
+\emph{exact} $k$-NN half for the $n = 4\,000$ sets, where the exact reference is
+affordable and Table~\ref{tab:bridges} is computed, and with the
+\emph{approximate} half at full $n$ for the rest.}
 \label{tab:datasets}
 \centering
 \footnotesize
@@ -707,9 +724,10 @@ Fig.~\ref{fig:batch} sweeps batch size against per-point cost.
 \end{axis}
 \end{tikzpicture}
 \caption{Per-point update cost against batch size, $n = 50\,000$, 3 seeds,
-cluster hardware. The fixed per-update phases---hubness refresh, bridge spanning
-tree, connectivity---rise from $8.6$--$8.9\%$ of update time at a $25\%$ batch to
-$24.6$--$28.1\%$ at a $0.1\%$ batch.}
+cluster hardware. For the three sets plotted, the fixed per-update
+phases---hubness refresh, bridge spanning tree, connectivity---rise from
+$8.6$--$8.9\%$ of update time at a $25\%$ batch to $24.6$--$26.2\%$ at a $0.1\%$
+batch.}
 \label{fig:batch}
 \end{figure}
 
