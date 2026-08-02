@@ -1,19 +1,99 @@
 # Incremental, multi-GPU CORE-SG
 
 An implementation of the CORE-SG replacement graph (Neto, Naldi, Campello & Sander,
-ICDE 2022) that is **incremental** and runs on **CPU (single- or multi-threaded),
-one GPU, or several GPUs**.
-
-The two halves of a CORE-SG are handled separately, as the thesis plan proposes:
-
-| half | original | here |
-|---|---|---|
-| `k_max`-NNG | one offline pass | **Dynamic NN-Descent** (Wang et al., IEEE TBD 2025), made incremental by sampled instances |
-| `MST_kmax` | exact MST over the complete mutual-reachability graph, `O(n² d)` | **anti-hub bridge estimate**, cost independent of `n` |
+ICDE 2022) that is **incremental** — new data can be inserted without rebuilding — and runs
+on **CPU (single- or multi-threaded), one GPU, or several GPUs**.
 
 ---
 
-## Building
+## 1. The problem this solves
+
+### 1.1 Density-based clustering needs a parameter you cannot guess
+
+HDBSCAN\* and DBSCAN\* do not cluster on raw distances. They first re-weight the space by
+local density, using two definitions:
+
+**Core distance.** For a point `x` and a smoothing parameter `mpts`,
+
+```
+core_mpts(x) = distance from x to its mpts-th nearest neighbour
+```
+
+A point in a dense region has a small core distance; a point in a sparse region has a large
+one. This is the density estimate, and `mpts` is how far you look to make it.
+
+**Mutual reachability distance.** For two points,
+
+```
+mrd_mpts(x, y) = max( core_mpts(x), core_mpts(y), d(x, y) )
+```
+
+Two points are only as close as the sparser of their two neighbourhoods allows. This
+inflates distances in sparse regions and leaves dense regions alone, which is what stops
+single-linkage clustering from chaining through noise.
+
+**The clustering is then a spanning tree.** Build the complete graph weighted by `mrd_mpts`,
+take its **minimum spanning tree**, and the single-linkage dendrogram of that MST *is* the
+HDBSCAN\* hierarchy — because the merge heights of single linkage are exactly the sorted MST
+weights. Cutting the MST at a threshold `ε` gives the DBSCAN\* clustering at that `ε`.
+
+So everything downstream is determined by one object: `MST_mpts`.
+
+**And `mpts` changes the answer.** It is the density scale, and no single value is correct
+for data whose regions differ in density — which is most real data. Practitioners therefore
+*sweep* `mpts`. The naive cost of that sweep is brutal: a fresh complete graph and a fresh
+MST for every value, each `O(n² d)`.
+
+### 1.2 What CORE-SG contributes
+
+The CORE-SG paper's result is that **one graph serves every `mpts` at once**. Define
+
+```
+CORE-SG_kmax  =  (k_max-NN graph)  ∪  MST_kmax
+```
+
+where both halves are built once, and `MST_kmax` is the MST of the complete
+mutual-reachability graph at the *largest* `mpts` you care about. Theorem 1 of that paper
+states that for every `mpts ≤ k_max`, **some** minimum spanning tree of the complete
+`mrd_mpts` graph is contained in this single graph.
+
+So to get `MST_mpts` for any `mpts`, you do not rebuild anything. You take the CORE-SG's
+edge list — `O(n · k_max)` edges, not `O(n²)` — **reweight** each edge with `mrd_mpts`, and
+run an MST over it. A quadratic construction per parameter value becomes one construction
+plus a near-linear extraction per value. Measured here: **71–303×** for a full sweep.
+
+The intuition for why it works is worth holding onto, because the rest of this project
+depends on it. An edge's weight `max(core(x), core(y), d(x,y))` falls into two cases. When
+`d(x,y)` is small relative to the core distances, the weight is decided by the *core
+distances alone* — and those are already recoverable from the k-NN graph. The edges that
+genuinely carry new information are the ones where the true distance dominates: long edges
+**bridging regions that the neighbourhoods cannot reach**. `MST_kmax` is there to supply
+exactly those.
+
+### 1.3 What this project changes, and why
+
+CORE-SG as published is a **static, single-machine** construction. Both halves are built
+offline over the whole data set. That leaves two problems this thesis attacks:
+
+- **New data forces a full rebuild.** Neither half is maintained under insertion.
+- **`MST_kmax` is `O(n² d)`** and does not fit on one device at scale.
+
+The two halves are handled in isolation — which is the central design idea, because it lets
+each be attacked with a different technique:
+
+| half | original | here | why |
+|---|---|---|---|
+| `k_max`-NNG | one offline NN-Descent pass | **Dynamic NN-Descent** (Wang et al., IEEE TBD 2025) made incremental by *sampled instances* | instances are self-contained, so they queue onto any device and bound its memory |
+| `MST_kmax` | exact MST over the complete `mrd` graph, `O(n² d)` | **anti-hub bridge estimate**, cost independent of `n` | incremental MST maintenance was ruled out as too complex for the scope; re-selecting a small set is trivially incremental |
+
+Sections 4–6 explain each mechanism from the idea down to the implementation; §7 shows how
+the two halves are recombined to answer a query.
+
+---
+
+## 2. Getting started
+
+### 2.1 Building
 
 Requires CMake ≥ 3.21 and a C++17 compiler. CUDA is optional and auto-detected.
 
@@ -37,7 +117,7 @@ Useful options: `-DCORESG_ENABLE_CUDA=OFF`, `-DCORESG_ENABLE_AVX2=OFF`,
 warp, which only makes progress under independent thread scheduling (Volta+). CMake
 errors out if you ask for less.
 
-## Running
+### 2.2 Running
 
 ```bash
 coresg_cli devices
@@ -54,23 +134,46 @@ coresg_bench conn    --n 100000 --dim 16 --k 24   # component-finding strategies
 
 Data formats: `.fvecs`, `.bvecs`, `.csv`, `.tsv`, raw `.bin` (with `--dim`).
 
----
+### 2.3 Evaluation
 
-## Evaluation
-
-**[RESULTS.md](RESULTS.md)** — the full analysis of the completed sweep: what each claim is
-supported by, what is *not* supported, insights, and future work.
+**[RESULTS.md](RESULTS.md)** — the full analysis: what each claim is supported by, what is
+*not* supported, insights, and future work.
 
 **[EXPERIMENTS.md](EXPERIMENTS.md)** — the suite design: data sets, baselines, metrics, and
 the reasoning behind each choice, including the traps that produced wrong numbers before
-they were caught.
+they were caught. **Read this before changing the evaluation routine.**
 
 ```bash
-python scripts/run_suite.py --list
-python scripts/run_suite.py --seeds 5 --out results.csv
+python scripts/run_suite.py --list                       # the matrix (70 runs)
+python scripts/run_suite.py --seeds 5 --out results.csv --resume --keep-going
+python scripts/summarize.py --results results.csv        # headline tables
 ```
 
-## Architecture
+The experiments, and the question each exists to answer:
+
+| experiment | question |
+|---|---|
+| `incremental` / `arrival` / `drift` | does inserting instead of rebuilding cost quality, under shuffled and adversarial arrival, over a long stream? |
+| `bridges` | do anti-hub bridges match the exact `MST_kmax` they replace? |
+| `connectivity` | how broken is the k-NN half really, at what `k` does each data set connect, and what does the connectivity gate cost? |
+| `budget` | ambient or intrinsic dimensionality in `d·ln(|E|)`? |
+| `mpts` | is the CORE-SG payoff preserved after incremental construction? |
+| `scaling` | does it scale across devices, and does per-device memory stay flat? |
+| `sensitivity` | which parameters actually matter, including the refinement-cap policy |
+| `batchsize` | where does the fixed per-update cost stop being amortised? |
+| `parity` | do the CPU and CUDA backends produce the same graph? |
+| `stream` | per-batch MST export, driving the external baseline below |
+
+The external baseline is **FISHDBC** (Dell'Amico, arXiv:1910.07283) — the closest published
+work, and the *opposite* design decision on the same problem: it maintains an incremental
+MST, this project avoids maintaining one. Both sides are driven over one arrival order and
+scored against one reference:
+
+```bash
+python scripts/compare_incremental.py --data data/manifold_mid.fvecs --name manifold_mid --limit 20000 --batches 8 --mpts 10 --k 24 --out results.csv
+```
+
+## 3. How it fits together
 
 ```
 Dataset ──► IncrementalKnn ──► KnnGraph ──► HubnessIndex ──► missing edges ──► CoreSG
@@ -104,12 +207,83 @@ Nothing in the k-NN path needs a cross-device reduction. The only global steps a
 merge (host-side, lock-protected top-k insertion) and the anti-hub MST, whose distance
 matrix is split row-wise across devices by `JobScheduler::mrd_matrix`.
 
-### Dynamic NN-Descent
+**Measured on 4× RTX 2080 SUPER**, and the two numbers that matter are the ones this design
+was built to produce:
+
+- **Per-device memory is exactly invariant with device count.** One instance over 10 M
+  points needs 4.936 GiB on 1, 2, 3 *and* 4 GPUs — identical to the byte — and falls with
+  the *instance* count (2.011 / 1.502 / 1.246 GiB at 4 / 8 / 16). Adding devices never adds
+  per-device footprint, because an instance only ever holds `|sample| + |batch|`.
+- **Speed-up is bounded by `min(instances, devices)`**, visible to the eye: with one
+  instance, four GPUs give **0.99×** — nothing. With two, the speed-up appears at two
+  devices and plateaus exactly where the instances run out. Parallelism is bounded by the
+  decomposition, not the hardware.
+
+Strong scaling reaches **2.50–3.23×** on 4 GPUs against Amdahl ceilings of 2.70–3.40×, and
+efficiency *rises* with problem size (0.63 → 0.81 as `n` goes 100 k → 10 M) because larger
+instances amortise the fixed per-job transfer. Full tables in RESULTS.md §4.
+
+## 4. Mechanism I — maintaining the `k_max`-NN half
+
+### 4.1 The idea
+
+NN-Descent builds an approximate k-NN graph from the observation that **a neighbour of a
+neighbour is a likely neighbour**. Start from random neighbourhoods; repeatedly, for each
+node, compare all pairs among its current neighbours and its *reverse* neighbours (the
+"local join"); keep the best `k`. It converges in a handful of rounds and costs far less
+than the `O(n² d)` exact graph.
+
+**But it is not incremental.** It refines a whole graph in place. Dropping a batch of new
+points into an existing graph leaves them with no neighbourhood for the descent to work
+from, and re-running the descent over everything costs `O(n)` per batch — which defeats the
+purpose when batches are small.
+
+**The scheme here.** Per batch, form several **instances**. An instance is
+
+```
+( a random unique sample of the existing base points )  ∪  ( the whole new batch )
+```
+
+together with the edges those sampled points already have. Each instance is a completely
+self-contained NN-Descent problem: its own vectors, its own local graph, no reference to
+global state. That single property is what buys everything else:
+
+- **it is warm-started**, because the sampled base points arrive with real neighbourhoods,
+  so it converges in far fewer rounds than a cold build;
+- **it bounds device memory** to `|sample| + |batch|` vectors rather than the whole data
+  set — which is what makes a data set larger than one GPU tractable;
+- **it can be queued onto any device**, since instances never talk to each other. The
+  instance count, not the device count, is therefore the unit of parallelism.
+
+Once the instances finish, every neighbourhood they produced is **merged** back into the
+global graph. The merge is just repeated insertion into sorted top-`k` lists — which is
+commutative, associative and idempotent, so instances can complete in any order and the
+result is the same. Finally one **restricted** NN-Descent runs over the new points and
+their neighbourhood, cleaning up edges the sampling missed.
+
+Sampling modes: `Partition` (one permutation cut into disjoint blocks — every base point is
+seen by exactly one instance, the best coverage per unit of work, default) or `Independent`
+(each instance draws its own sample; blocks overlap, coverage is probabilistic).
+
+> **This turned out to be more than a scheduling trick.** Because each batch re-visits
+> sampled base points inside its instances, a graph built incrementally over eight batches
+> has had its base refined eight times, while a rebuild descends once — and the incremental
+> graph is measurably *better* as a result. Critically, this survives a compute-matched
+> comparison: giving a rebuild more descent rounds buys nothing at all (the descent has
+> already reached a fixed point), and even a rebuild tuned with a wider candidate list stays
+> 3.5–7.0 points of recall behind on hard data. The advantage comes from the
+> *decomposition*, not from extra work. See RESULTS.md §1.1b — it suggests overlapping
+> sampled-instance descent may be a better way to build large k-NN graphs generally,
+> independent of streaming.
+
+### 4.2 Dynamic NN-Descent, as implemented
 
 Follows Algorithm 1 of the paper: sampling happens on the **live** graph `G` (no static
 snapshot `H`), the reverse graph `R` is **incomplete and bounded** to `smpN` entries per
 flavour, and there is **no barrier inside a round**. Threads touch disjoint nodes and
-synchronise only through the k-NN graph's per-node spin locks.
+synchronise only through the k-NN graph's per-node spin locks. A lost or stale reverse-cache
+entry only changes which pairs get compared in a given round — never the validity of the
+graph — which is what makes the lock-free design safe.
 
 Two implementation notes:
 
@@ -125,34 +299,101 @@ stored transposed `[d][i]` so the 16 lanes covering a tile row hit 16 distinct b
 The descent runs entirely in rank space; distances are squared on upload and rooted on
 download, so a graph can move between the CPU and GPU backends mid-pipeline.
 
-### Incremental k-NN
+### 4.3 The refinement cap
 
-Per batch: `instances` random unique samples of the base points, each merged with the
-whole batch, each warm-started from the edges its sampled points already have, each an
-independent NN-Descent job. Then all neighbourhoods are merged back (repeated insertion
-into sorted top-k lists *is* "keep the best k"), then one restricted NN-Descent over the
-new points and their neighbourhood.
+The final restricted descent runs over the new points, their neighbours (ring 1) and
+optionally their neighbours' neighbours (ring 2). Unbounded, that set reaches `k²` nodes per
+new point and saturates a small graph — measured at 97.8 % of the graph before capping.
 
-Sampling modes: `Partition` (one permutation cut into disjoint blocks — full coverage,
-default) or `Independent` (each instance draws its own sample).
+`refine_max_fraction` (default 0.25) bounds it. The set is built new points → ring 1 →
+ring 2, so the cap **drops the outermost nodes first and never sacrifices a new point**.
 
-**The refinement set is capped** (`refine_max_fraction`, default 0.25). With `k=20` and a
-second ring, an uncapped set reaches `k²` nodes per new point and saturates a small graph
-— measured at 97.8% of the graph before the cap, 25.0% after, with new-point recall
-moving only 0.9999 → 0.9996. The set is built new points → ring 1 → ring 2, so the cap
-drops the outermost nodes first and never sacrifices a new point.
+> Two measured caveats. First, the cap is *always binding* in practice, so a reported
+> refinement fraction is reporting the ceiling rather than the algorithm's appetite.
+> Second, the cap costs quality: removing it entirely buys 0.7 points of recall on the
+> hardest fragmenting data set for 0.6 % more time, because refinement is only 3–6 % of an
+> update. Raising the default is a one-line change with evidence behind it (RESULTS.md
+> §5.5); it is left at 0.25 so the reference measurements stay valid.
+>
+> A related hypothesis was tested and **refuted**: that because the cap is a fraction of
+> `n`, updates cost `Θ(n)`, and an absolute ceiling would make them `Θ(batch)`. Per-batch
+> cost grows identically under both policies, so the growth comes from elsewhere (the
+> connectivity rebuild, the hubness refresh, or the budget) and is sub-linear anyway.
 
-### Hubness and the missing edges
+---
+
+## 5. Mechanism II — replacing the `MST_kmax` half
+
+### 5.1 The idea: bridges leave from borders, and borders are anti-hubs
+
+Recall from §1.2 that the MST half only has to supply the edges the neighbourhoods cannot:
+the ones **bridging density-separated regions**. Everything else is already determined by
+core distances the k-NN graph carries.
+
+Now ask where such a bridge can start. A bridge leaves a region from its **border** — an
+interior point always has a closer neighbour in the direction of travel. So if borders could
+be identified cheaply, the expensive `O(n² d)` MST could be replaced by an MST over *just
+the border points*.
+
+In more than a couple of dimensions, geometric "border" is awkward to define. **Local
+hubness** captures it directly. The k-NN relation is asymmetric: an interior point sits
+inside many of its neighbours' neighbourhoods, while a border point sits inside few, because
+its neighbours' own neighbourhoods point back into the cluster. That gives:
 
 ```
-reverse_degree(v) = |{u : v ∈ NN(u)}|
-reverse_score(v)  = reverse_degree(v) / denom(rd of NN(v))
+reverse_degree(v) = |{ u : v ∈ NN(u) }|          -- how often v is chosen
+reverse_score(v)  = reverse_degree(v) / denom( rd of NN(v) )
 ```
 
-with the specified degenerate rules (`rd>0, sum=0 → k`; `rd=0, sum>0 → 0`; both 0 → 1).
-Because the denominator is a *local* statistic, the score is invariant to the absolute
-density of the region — a border point of a dense cluster scores like a border point of a
-sparse one.
+**The denominator is what makes this work.** Comparing `rd(v)` against the *absolute*
+population would just find sparse regions. Comparing it against `v`'s own neighbourhood
+makes the score **invariant to local density** — a border point of a dense cluster scores
+like a border point of a sparse one, which is exactly what is needed when the data mixes
+regions of very different density. Reading:
+
+```
+score = 1  → neutral      > 1 → local hub      < 1 → local anti-hub (a border point)
+```
+
+The bridge estimate is then: take the `d · ln(|E|)` lowest-scoring nodes, run an exact MST
+over just those in mutual-reachability space, and use its edges as the missing half.
+
+**Why this is the right shape for an incremental structure.** The selected set's size
+depends on `d` and `ln(|E|)`, **not on `n`**. So the bridge MST is `O(m² d)` with `m ≪ n`,
+and — the part that matters most — **no MST ever has to be repaired when points arrive**.
+There is no incremental-MST problem to solve; there is only a small set to re-select. That
+is the trade the whole thesis rests on, and it is measured: 10.5–36× faster than the exact
+MST, at a spanning tree at worst **0.024 % heavier**, with DBSCAN\* ARI **exactly 1.0000**.
+
+The degenerate rules are as specified: `rd > 0, sum = 0 → k`; `rd = 0, sum > 0 → 0`;
+both 0 → 1.
+
+### 5.2 Three things the bare idea gets wrong, and the fixes
+
+The plain `d · ln(|E|)` rule has three measured failure modes. Each has a mechanism and a
+targeted fix, and each is documented in full further down.
+
+**(a) The budget cannot see how many clusters exist.** It depends only on `d` and `|E|`, so
+once the number of density-separated regions approaches it, some regions get no selected
+node at all — and a bridge cannot leave a region with no representative. Measured: 120
+clusters at `d=8` fragment into 41 pieces. Fix: `min_per_component` (default 2) guarantees
+every k-NN component contributes its own lowest scorers on top of the global budget. This
+takes "bridges alone left the graph split" from 6/24 configurations to 0/24 and costs
+nothing where the budget already sufficed. It also closes a hole no score ranking can: in a
+small uniform detached component *every* node is exactly neutral, so no score-ranked budget
+will ever reach it, however detached it is.
+
+**(b) Ambient dimensionality is the wrong scale.** The bridge MST costs `m² d / 2` with
+`m ∝ d`, so cost grows as **`d³`** — and at `d = 1000` the budget exceeds `n`, meaning the
+"approximation" selects every point and silently becomes the exact MST it exists to replace.
+Fixes: `max_pair_ops` caps on cost rather than count, and `budget_dimension = Intrinsic`
+substitutes an estimated intrinsic dimensionality read free off the stored k-NN radii.
+
+**(c) An estimate can still leave the graph disconnected**, which yields a forest rather
+than a spanning tree and breaks every downstream density-based method. Fix: an explicit
+repair step (`ensure_connected`), described under *Deviations* below.
+
+### 5.3 Keeping the hubness index incremental
 
 `denom` is selectable (`HubnessParams::normalization`, `--normalization`):
 `arithmetic` (the specified mean, default), `geometric` (`exp(mean(ln(rd+1))) - 1`), or
@@ -175,10 +416,52 @@ weight, so `edges(mpts)` reweights them exactly the way it reweights the k-NN ha
 
 ---
 
-## Measured results
+## 6. Mechanism III — components, and why they are needed every batch
 
-RTX 4070 Ti SUPER (sm_89), CUDA 12.6, MSVC 19.41. Gaussian blobs with per-cluster
-densities spanning an order of magnitude.
+Both fixes in §5.2 need a **component labelling of the k-NN graph**: the per-component quota
+buckets candidates by component, and the repair step has to know what is still disconnected.
+That labelling is therefore on the critical path of every update, and had better not be the
+most expensive thing in it.
+
+It is not. `ConnectivityTracker::rebuild` runs a lock-free union-find directly over the
+adjacency arrays across the thread pool — **1–2 ms on 100 000 points** — and folding the
+bridges in on top is `O(n + |bridges|)` on the cached labels. Full details, including the
+10× win that came from *not* materialising an edge list, and the measured **negative**
+result on maintaining components incrementally, are under *Finding the components cheaply*
+below.
+
+> **This also yields a cheap optimisation the evaluation recommends.** If
+> `components(k-NN) == 1` the bridges are provably redundant — there is nothing to bridge.
+> Measured across 13 data sets, the labelling costs 0.08–3.5 ms against 5.3–222 ms of
+> hubness + bridge work, a **48–136× ratio**. And every real data set tested has a connected
+> k-NN graph at the operating `k`. Gating the bridge computation on that check would skip it
+> entirely on real data (RESULTS.md §7).
+
+---
+
+## 7. Assembly: extracting `MST_mpts`
+
+With both halves in hand, `CoreSG` holds the union as an edge list. For a query `mpts`:
+
+1. compute `core_mpts(v)` for every node — a lookup into the stored k-NN distances, free;
+2. reweight every edge with `mrd_mpts(u,v) = max(core(u), core(v), d(u,v))`;
+3. run an MST over the reweighted `O(n · k_max)` edge list (parallel Borůvka, or Kruskal
+   single-threaded).
+
+`all_msts()` does the whole sweep sharing one materialisation of the edge list.
+`exact_mst(mpts)` computes the true `O(n² d)` MST over the complete graph as an evaluation
+reference — it is not a scalable path and exists so the approximation can be measured
+against the thing it approximates.
+
+---
+
+## 8. Measured results
+
+> **These are the dev-box reference numbers** (RTX 4070 Ti SUPER, sm_89, CUDA 12.6,
+> MSVC 19.41; Gaussian blobs with per-cluster densities spanning an order of magnitude),
+> kept so that drift in the routine is detectable. **The thesis evaluation is
+> [RESULTS.md](RESULTS.md)** — a 17,538-measurement sweep on 4× RTX 2080 SUPER across 14
+> data sets, plus follow-up experiments. Where the two disagree, RESULTS.md is the record.
 
 ### Correctness
 
@@ -252,10 +535,13 @@ equally optimal tree. Total weight — and the clustering it induces — stays w
 
 ---
 
-## Deviations from the written specification
+## 9. Deviations from the written specification
 
-Four places where the implementation does not follow the spec literally. Each is a
-deliberate call, and each is isolated behind a flag where that was possible.
+Five places where the implementation does not follow the spec literally. Each is a
+deliberate call, each was raised and agreed rather than assumed, and each is isolated behind
+a flag where that was possible. **Do not "fix" any of these toward the literal text without
+re-reading the reasoning here** — they are judgement calls on an ambiguous specification,
+not bugs.
 
 **1. `reverse_score` limits — the spec's "approaches" bullets are wrong, its threshold
 table is right.** With
@@ -293,7 +579,22 @@ sufficient. Disable with `ensure_connected = false` to measure how often the est
 alone suffices — `CoreSGStats::components_before_repair` reports it either way, and the
 sweep above quantifies exactly when it is needed.
 
-## Choosing the denominator
+**5. A per-component anti-hub quota — also added, not in the spec.**
+`HubnessParams::min_per_component` (default 2) guarantees every k-NN component contributes
+its own lowest scorers on top of the global `d·ln(|E|)` budget. The budget cannot see how
+many clusters exist, so once the component count approaches it some regions receive no
+representative and no bridge can leave them. Set to 0 for the pure specified rule. Measured
+justification, and the structural hole it closes that no score ranking can, is in §12.
+
+> **A note on `components_before_repair`, because it is easy to misread.** It is recorded
+> *after* the bridges are folded into the component labelling, so it answers "did the
+> bridges connect the graph", **not** "how disconnected was the graph". On a run where the
+> bridges work it reads 1 by construction. To measure the k-NN half itself, use
+> `MissingEdgeMode::None` with `ensure_connected = false` — which is what the `connectivity`
+> experiment does. Quoting it as evidence of fragmentation is a mistake this project made
+> once already (RESULTS.md §2.1).
+
+## 10. Design study: choosing the denominator
 
 `coresg_bench norm` — n = 6 000, d = 16, k = 24, 12 clusters, exact k-NN half so only the
 hubness layer varies:
@@ -333,7 +634,7 @@ interpretable, since its neutral point is predictable from a population statisti
 selection that feeds the bridges is unaffected either way, so this is a presentation
 choice, not a correctness one.
 
-## Ambient vs intrinsic dimensionality in the budget
+## 11. Design study: ambient vs intrinsic dimensionality in the budget
 
 The budget `d·ln(|E|)` uses the *ambient* dimensionality. Since the bridge MST costs
 `m²·d/2` with `m ∝ d`, the whole step scales as **d³** — and on real data that breaks:
@@ -385,7 +686,7 @@ defensible recommendation is intrinsic dimensionality for the *scaling* (it remo
 d³ blowup and the degeneracy) combined with a multiplier or floor, rather than a bare
 `ID·ln(|E|)`, which under-provisions on clustered manifolds.
 
-## Does the anti-hub bridge set ever miss a component?
+## 12. Design study: does the anti-hub bridge set ever miss a component?
 
 `coresg_bench repair` — n = 20 000, repair disabled, sweeping the shapes that should
 stress the estimate. Component count from k-NN + bridges alone:
@@ -446,7 +747,7 @@ degree as its neighbours, everyone is exactly neutral, so no score ranking will 
 that region however detached it is. Bucketing by component sidesteps the score entirely.
 `test_hubness` pins this down on a graph where nothing at all is tagged an anti-hub.
 
-## Finding the components cheaply
+## 13. Design study: finding the components cheaply
 
 Since the repair needs a component labelling every batch, that labelling had better not
 be the most expensive thing in an update. Three approaches, measured on n = 100 000,
@@ -491,7 +792,7 @@ Kept behind `incremental_connectivity` (default **off**) because it becomes the 
 answer the moment the destroyed set shrinks — which is what freezing converged regions of
 the k-NN graph would do.
 
-## Known limits
+## 14. Known limits
 
 * `exact_mst()` and `brute_force_graph()` are `O(n² d)` references for evaluation — they
   are not scalable paths. Practical up to ~10⁵ points on GPU.
@@ -503,5 +804,12 @@ the k-NN graph would do.
   per-node header cost; auto-disabled above `reverse_list_node_limit` nodes.
 * L1 and inner product run on CPU only. Inner product is rejected by `CoreSG` outright:
   mutual reachability needs a non-negative dissimilarity.
-* Multi-GPU has been exercised through the scheduler and the CPU multi-slot path, but
-  this machine has a single GPU — the cross-device numbers are still to be measured.
+* **Everything here is insert-only.** Deletion is untouched and is the harder direction —
+  it is the same problem that made incremental component maintenance lose (§6).
+* Speed-up is bounded by `min(instances, devices)`, so **instances should be a multiple of
+  the device count**: at 4 instances on 3 GPUs the split is (2,1,1) and the critical path is
+  still 2 instances. There is also a measured tension here — recall peaks at 4 instances and
+  declines slightly at 8–16, while parallelism needs more of them.
+* The bridge estimate can only be *evaluated* where the k-NN graph actually fragments, and
+  every real data set tested is already connected at the operating `k`. Claim C's honest
+  scope is "on data that fragments" (RESULTS.md §5.1).
