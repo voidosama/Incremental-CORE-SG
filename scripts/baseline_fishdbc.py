@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """FISHDBC baseline, emitted into the same CSV schema as coresg_exp.
 
+For the actual head-to-head, use `scripts/compare_incremental.py` instead: it
+drives both methods over one arrival order and scores both against one
+reference, which is what makes the two ARI columns comparable. This script runs
+FISHDBC alone and is kept for checking the installation and for re-measuring
+the baseline on its own.
+
+
 FISHDBC (Dell'Amico, arXiv:1910.07283) is the closest published approach: a
 flexible, incremental, scalable approximation of HDBSCAN* that keeps an
 incremental MST fed by HNSW-derived candidate edges. It is the natural external
@@ -86,15 +93,23 @@ def load_fishdbc():
 
 
 def reference_labels(x, min_cluster_size):
-    """Exact HDBSCAN* labels, the common yardstick both methods are scored on."""
+    """Exact HDBSCAN* labels, the common yardstick both methods are scored on.
+
+    `min_samples` is pinned rather than left to default. sklearn defaults it to
+    `min_cluster_size` while FISHDBC's constructor defaults it to 5, so leaving
+    both alone scores an mpts=5 clustering against an mpts=10 reference -- a
+    handicap on the baseline that has nothing to do with FISHDBC.
+    """
     try:
         from sklearn.cluster import HDBSCAN
-        return HDBSCAN(min_cluster_size=min_cluster_size).fit_predict(x)
+        return HDBSCAN(min_cluster_size=min_cluster_size,
+                       min_samples=min_cluster_size).fit_predict(x)
     except ImportError:
         pass
     try:
         import hdbscan
-        return hdbscan.HDBSCAN(min_cluster_size=min_cluster_size).fit_predict(x)
+        return hdbscan.HDBSCAN(min_cluster_size=min_cluster_size,
+                               min_samples=min_cluster_size).fit_predict(x)
     except ImportError:
         raise SystemExit("need scikit-learn >= 1.3 (HDBSCAN) or the hdbscan package "
                          "for the reference clustering")
@@ -135,7 +150,8 @@ def main():
         order = rng.permutation(n)
         xs = x[order]
 
-        clusterer = FISHDBC(euclidean)
+        # Same pinning as the reference: the default is min_samples=5.
+        clusterer = FISHDBC(euclidean, min_samples=args.min_cluster_size)
 
         t0 = time.perf_counter()
         for row in xs[:base]:

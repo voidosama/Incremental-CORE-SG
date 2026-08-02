@@ -53,6 +53,25 @@ The gap is largest exactly where a single descent struggles: glove100 (+13.0 poi
 angular data with high intrinsic dimensionality) and gist1m (+8.9, d=960). Where a single
 descent already converges, the gap nearly closes (manifold_mid +0.3).
 
+> **The control this table needs (2026-08-01).** "Not an equal-work comparison" is a
+> caveat a reviewer will convert into an objection, so the `rebuild_effort` frontier now
+> answers it directly: sweep the rebuild's descent effort and read the incremental point
+> against the resulting (cost, recall) curve. Dev-box, `manifold_mid`, 1 seed:
+>
+> | arm | seconds | recall |
+> |---|---|---|
+> | rebuild, baseline | 2.13 | 0.99615 |
+> | rebuild, `iters_x4` | 1.68 | 0.99606 |
+> | rebuild, `sample_x2` | 2.10 | 0.99840 |
+> | rebuild, `iters_x2_sample_x2` | 2.31 | 0.99853 |
+> | **incremental** | 5.74 | **0.99942** |
+>
+> More *iterations* buy nothing — the descent has converged, the early stop fires at the
+> same 4 rounds and distance evaluations move 0.02 %. More *sampling* does help, and is
+> nearly free in wall-clock. So the defensible claim is narrower than the table above:
+> **a better-tuned rebuild closes most of the gap, and the residue costs 2.5×.** The
+> write-up should lead with that rather than with the raw margin.
+
 ### 1.2 Arrival order — no measurable penalty
 
 The adversarial case: points arriving grouped by region rather than shuffled.
@@ -101,10 +120,32 @@ fragment:
 | sift1m | 2 | 1.00000 | 1.0000 | 10.5× |
 
 **Worst case anywhere: 1.00024 — a spanning tree 0.024 % heavier than optimal — at ARI
-exactly 1.0000 and 10.5–36× less work.** At full scale `manifold_wide` fragments into
-**273 components and the bridges alone reduce it to 1**.
+exactly 1.0000 and 10.5–36× less work.**
 
 This is the central result of the thesis and it holds cleanly.
+
+> **Correction (2026-08-01), and it needs a re-run rather than a re-wording.** An earlier
+> version of this section read "at full scale `manifold_wide` fragments into 273 components
+> and the bridges alone reduce it to 1". The second half was measured;
+> **the 273 was not.** `components_before_repair` is filled in *after* the bridges are
+> folded into the component labelling, so every full-scale row in `results.csv` reads 1 by
+> construction, and the string `273` does not appear in the file at all — it came from the
+> data-set design table in EXPERIMENTS.md §4.3. The `knn_only` ablation that would have
+> measured it only ran at n ≤ 4000.
+>
+> The new `connectivity` experiment measures it directly. Single-seed dev-box check:
+> `manifold_wide` at n = 100 000, k = 24 has **257 components** in its k-NN half, so the
+> claim stands and the figure was close. It is quoted here as provisional until the cluster
+> sweep writes it to `results.csv`.
+>
+> One thing that check settled and is worth stating in the write-up: every fragmenting
+> count in this document was measured with an **exact** k-NN half, and it was reasonable to
+> worry that NN-Descent's residual errors would be long cross-cluster edges that quietly
+> connect a graph the exact k-NN leaves in pieces — which would mean the bridge evidence
+> was gathered in an easier regime than the one that ships. Measured: the opposite. On
+> `manifold_c24` the exact half gives 24 components and the approximate half gives 26–27.
+> Approximation fragments *more*, because misses remove edges while errors stay local. The
+> evidence is conservative, not flattered.
 
 ### 2.2 The connected-graph finding is itself a contribution
 
@@ -239,6 +280,10 @@ The write-up must not present eleven data sets as eleven confirmations.
 Backend parity is covered by a unit test and by `preflight`, but no experiment writes it to
 the CSV. If asked "do the backends agree?", the answer currently cites a unit test.
 
+*Addressed, not yet swept:* the `parity` experiment now measures it. Dev-box check on
+`manifold_c24`: recall 0.93062 (CUDA) vs 0.92970 (CPU), DBSCAN\* ARI between the two
+0.99946, and `jobs_on_device` confirms the GPU arm was not silently demoted to the host.
+
 ### 5.3 The capacity claim was never demonstrated
 
 Intended: one instance over 10M points needs 7.90 GiB and cannot fit an 8 GB card.
@@ -263,10 +308,21 @@ stated as arithmetic plus the memory-scaling table in §4.3, not as a demonstrat
 | antihub_multiplier | 0.5/1/2/4 → **0.9976 for all four** |
 | min_per_component | 0/1/2/4 → **0.9976 for all four** |
 
-The last two are flat because the sensitivity experiment measures **k-NN recall**, which
-those parameters cannot affect — they govern bridge coverage. The right metric for them is
-`components_before_repair` and the MST weight ratio. The sweep as built cannot answer the
-question it appears to ask.
+> **Correction (2026-08-01).** This was diagnosed as a metric problem — the sweep measures
+> k-NN recall, which bridge-coverage parameters cannot affect. That is true but is not the
+> cause. The experiment **already emitted** `components_before_repair`, `antihubs_selected`
+> and `bridge_seconds` per configuration, and `components_before_repair` came back as
+> **1.000 for every configuration on all three data sets**, including
+> `min_per_component = 0` and `antihub_multiplier = 0.5`. The cause was the *data*:
+> `manifold_mid`, `fma_mfcc` and `sift1m` all have a connected k-NN graph at n = 50 000, so
+> the coverage knobs had nothing to act on. Re-targeting the metric alone would have
+> produced a second flat table.
+>
+> Fixed two ways: fragmenting data sets (`manifold_wide`, `manifold_c24`) are now in the
+> sensitivity matrix, and the experiment emits a `reference / knn_only` row giving the
+> component count of the k-NN half alone — so a column of 1s reads as "the bridges took 24
+> components to 1" rather than "nothing happened". Verified on `manifold_c24`: the
+> reference row reports 24, every swept configuration reports 1.
 
 The instance-count result is worth noting on its own: quality peaks at 4 and *declines*
 slightly at 8–16, so more instances is not free. Since instances are also the unit of
@@ -282,6 +338,29 @@ natural appetite, and `refine_max_fraction` is not swept.
 
 Installed and validated on a 3,000-point smoke test (ARI 1.0000 by batch 3). No comparative
 numbers exist. This is the only external baseline and its absence is the most visible gap.
+
+*Addressed, not yet swept — and running the matrix as it stood would not have closed it.*
+The two sides were not comparable: `baseline_fishdbc.py` scored FISHDBC's **HDBSCAN\***
+against sklearn's exact HDBSCAN\*, while every CORE-SG experiment scored **DBSCAN\***
+against the exact CORE-SG. Two clusterings, two references, one table — not defensible.
+(A second, smaller error compounded it: FISHDBC ran at `min_samples=5` against an mpts=10
+reference, handicapping the baseline for no reason.)
+
+`scripts/compare_incremental.py` now drives both methods over one arrival order and scores
+both against one per-batch reference, converting the CORE-SG MST to HDBSCAN\* labels with
+the same `hdbscan.hdbscan_` extraction FISHDBC itself calls. Dev-box run
+(`manifold_mid`, 3 000 points, 4 batches, mpts = 10):
+
+| batch | n | CORE-SG | FISHDBC | reference clusters |
+|---|---|---|---|---|
+| 1 | 1 875 | 0.5870 | 0.5985 | 120 |
+| 2 | 2 250 | 0.8501 | 0.8608 | 143 |
+| 3 | 2 625 | **1.0000** | **1.0000** | 149 |
+| 4 | 3 000 | **1.0000** | **1.0000** | 150 |
+
+The two track each other to within 0.012 ARI and both reach 1.0000 by batch 3, on the same
+yardstick. The early ramp is the reference's own (it finds 120 of 150 clusters at batch 1),
+and both methods find the *same* cluster counts where they differ from it.
 
 ---
 
@@ -336,15 +415,22 @@ zero.
 
 ## 8. Future work
 
-### Immediate (hours)
+### Immediate — all implemented, none swept
 
-1. **Close the capacity claim.** Re-run the probe at k=128, where one instance needs
-   8.29 GiB and must fail. One short run converts §5.3 from arithmetic to demonstration.
-2. **Run FISHDBC across the matrix.** Compare ARI and per-batch cost *slope* only — never
-   raw wall-clock, since it is single-threaded Python against C++/CUDA.
-3. **Re-target the anti-hub sensitivity sweep** at `components_before_repair` and MST
-   weight ratio instead of recall (§5.4).
-4. **Add a backend-parity experiment** so §5.2 rests on measurements.
+Six additions are in the harness and smoke-tested on the dev box; the matrix is now 70
+runs. What remains is cluster time, not code.
+
+1. **Close the capacity claim.** `capacity10m_oom128` probes k=128, where one instance
+   needs ~8.3 GiB and must fail. Converts §5.3 from arithmetic to demonstration.
+2. **Run the FISHDBC head-to-head** via `compare_incremental.py` (§5.6), on
+   `manifold_mid`, `fma_mfcc` and `sift1m` at `--limit 20000`.
+3. **Re-target the anti-hub sensitivity sweep** — at fragmenting *data*, not just at a
+   different metric (§5.4).
+4. **Backend parity** (§5.2).
+5. **The `connectivity` experiment**, which supplies the k-NN component counts §2.1 and
+   §5.1 were both missing, and prices the connectivity gate below.
+6. **The `rebuild_effort` frontier**, which is the answer to the obvious objection to §1.1
+   — see the correction there.
 
 ### Research directions
 
@@ -353,8 +439,10 @@ broader pattern. Does `mpts` itself, or the k in k-NN construction, deserve intr
 than ambient scaling? The estimator is free given the graph.
 
 **A connectivity gate.** If `components(k-NN) == 1` the bridges are provably redundant.
-Detecting that costs 1–2 ms (§4.3 of EXPERIMENTS.md) against 1–5 % of build time for the
-bridges. On real data this would skip the bridge computation entirely.
+The `connectivity` experiment now prices it rather than estimating it: on `manifold_wide`
+the component labelling costs **1.4 ms** against **115 ms** of hubness + bridge work, which
+is 9.3 % of build time — an ~80× ratio. On the six data sets with a connected k-NN graph
+that 115 ms buys nothing at all, so the gate is close to free insurance on the insurance.
 
 **Sampled-instance descent as a construction method.** §1.1 shows overlapping sampled
 instances beating a single global descent at equal-ish cost. Studied on its own — instance
@@ -386,6 +474,19 @@ python scripts/run_suite.py --seeds 5 --out results.csv --resume --keep-going
 python scripts/summarize.py --results results.csv
 ```
 
-Every figure above comes from `results.csv` (17,538 rows). The suite is 47 runs; a full
-sweep took approximately three days on 4× RTX 2080 SUPER, dominated by the 10M-point
-scaling sweep.
+Every figure above comes from `results.csv` (17,538 rows) **except those marked as
+dev-box checks in the 2026-08-01 corrections**, which are single-seed runs on one
+RTX 4070 Ti SUPER and are quoted only until the cluster sweep replaces them.
+
+The suite is now 70 runs. `--resume` skips the 47 already in the CSV, so the additions cost
+their own time only — minutes for `connectivity`, `parity` and `batchsize`; the
+`capacity10m_oom128` probe is short because a refused job fails fast with the OOM fallback
+disabled. The original sweep took approximately three days, dominated by the 10M-point
+scaling run, which must **not** be scheduled again.
+
+The external baseline is not part of `run_suite` — it drives `coresg_exp` itself and needs
+the conda environment with FISHDBC:
+
+```bash
+python scripts/compare_incremental.py --data data/manifold_mid.fvecs --name manifold_mid --limit 20000 --batches 8 --mpts 10 --k 24 --out results.csv
+```

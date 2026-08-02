@@ -128,6 +128,24 @@ struct Options {
     /// large data set -- 4.3 hours on 10M points before the GPU section even
     /// starts -- and irrelevant when the run exists to probe device capacity.
     bool skip_cpu_scaling = false;
+    /// Comma-separated k values for the `connectivity` sweep. Empty means the
+    /// built-in {4,8,16,24,32,48,64}.
+    std::string k_sweep;
+    /// Comma-separated batch sizes, as fractions of n, for `batchsize`.
+    /// Empty means the built-in {0.001, 0.005, 0.01, 0.05, 0.10, 0.25}.
+    std::string batch_fractions;
+    /// `stream` only: arrival order supplied by the driver script, as a raw
+    /// array of n int32 indices. Both methods have to see the same points at
+    /// the same batch or the per-batch ARIs do not join.
+    std::string order_file;
+    /// `stream` only: directory the per-batch MSTs are written to.
+    std::string mst_dir;
+    /// `stream` only: mpts the exported MST is built for. Must equal the
+    /// `min_samples` of the reference clustering the Python side computes.
+    std::uint32_t export_mpts = 10;
+    /// First seed value. `stream` needs it to match the driver script's own
+    /// numbering so rows from the two sides join on (dataset, seed, batch).
+    std::uint64_t seed_base = 0;
 };
 
 std::vector<std::uint32_t> parse_uint_list(const std::string& s) {
@@ -137,6 +155,19 @@ std::vector<std::uint32_t> parse_uint_list(const std::string& s) {
         const std::size_t comma = s.find(',', start);
         const std::string tok = s.substr(start, comma - start);
         if (!tok.empty()) out.push_back(static_cast<std::uint32_t>(std::stoul(tok)));
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return out;
+}
+
+std::vector<double> parse_double_list(const std::string& s) {
+    std::vector<double> out;
+    std::size_t start = 0;
+    while (start <= s.size()) {
+        const std::size_t comma = s.find(',', start);
+        const std::string tok = s.substr(start, comma - start);
+        if (!tok.empty()) out.push_back(std::stod(tok));
         if (comma == std::string::npos) break;
         start = comma + 1;
     }
@@ -377,6 +408,66 @@ void exp_incremental(const Options& o, const Data& d, Csv* csv, Arrival arrival)
                 dbscan_labels_from_mst(mb, static_cast<idx_t>(cursor), thresh, nullptr);
             csv->row(name, d.name, cursor, d.dim, o.k, "arrival", order_label, seed, -1,
                      "ari_vs_rebuild", adjusted_rand_index(la, lb));
+
+            // The equal-work control, and the reason it is needed: the
+            // incremental path performs strictly *more* total descent than one
+            // rebuild. Each batch re-visits sampled base points inside its
+            // instances, so after `batches` updates the base has been refined
+            // `batches` times while the rebuild descends once. A plain rebuild
+            // is therefore a cheaper baseline, not an equal one, and reporting
+            // "incremental wins on recall" against it invites the obvious
+            // reply that it simply did more work.
+            //
+            // Rather than hand-tune one matched configuration, sweep the
+            // rebuild's descent effort and emit the whole (cost, recall)
+            // frontier. The incremental point can then be read against the
+            // rebuild curve *at equal cost*, which is the comparison a reader
+            // actually wants -- and if the frontier is flat because the
+            // descent has already converged, that is itself the answer, so
+            // `refine_rounds` is recorded to tell the two cases apart.
+            //
+            // Only the first two seeds run it: this is four extra rebuilds per
+            // seed and the frontier is a trend, not a per-seed quantity.
+            if (s < 2) {
+                struct RebuildEffort {
+                    const char* name;
+                    std::uint32_t iters_mult;   // more rounds, subject to `delta` early stop
+                    std::uint32_t sample_mult;  // strictly more candidate pairs per round
+                };
+                const RebuildEffort efforts[] = {
+                    {"iters_x2", 2, 1},
+                    {"iters_x4", 4, 1},
+                    {"sample_x2", 1, 2},
+                    {"iters_x2_sample_x2", 2, 2},
+                };
+                for (const RebuildEffort& eff : efforts) {
+                    CoreSGParams ph = base_params(o, d, seed);
+                    ph.incr.instance_nnd.iters *= eff.iters_mult;
+                    ph.incr.refine_nnd.iters *= eff.iters_mult;
+                    ph.incr.instance_nnd.sample *= eff.sample_mult;
+                    ph.incr.refine_nnd.sample *= eff.sample_mult;
+                    CoreSG heavy(ph);
+                    const CoreSGStats hs = heavy.build(all.data(), cursor, d.dim);
+                    csv->row(name, d.name, cursor, d.dim, o.k, "rebuild_effort", eff.name, seed,
+                             -1, "rebuild_seconds", hs.total_seconds);
+                    csv->row(name, d.name, cursor, d.dim, o.k, "rebuild_effort", eff.name, seed,
+                             -1, "recall_rebuild", knn_recall(heavy.knn(), exact, o.k).recall);
+                    csv->row(name, d.name, cursor, d.dim, o.k, "rebuild_effort", eff.name, seed,
+                             -1, "refine_rounds", double(hs.knn_stats.refine_stats.rounds));
+                    csv->row(name, d.name, cursor, d.dim, o.k, "rebuild_effort", eff.name, seed,
+                             -1, "distance_evals", double(hs.knn_stats.refine_stats.distance_evals));
+                }
+                // The two points the frontier is read against, repeated under
+                // the same config name so a single group-by produces the plot.
+                csv->row(name, d.name, cursor, d.dim, o.k, "rebuild_effort", "baseline", seed, -1,
+                         "rebuild_seconds", rs.total_seconds);
+                csv->row(name, d.name, cursor, d.dim, o.k, "rebuild_effort", "baseline", seed, -1,
+                         "recall_rebuild", knn_recall(rebuilt.knn(), exact, o.k).recall);
+                csv->row(name, d.name, cursor, d.dim, o.k, "rebuild_effort", "incremental", seed,
+                         -1, "rebuild_seconds", cumulative);
+                csv->row(name, d.name, cursor, d.dim, o.k, "rebuild_effort", "incremental", seed,
+                         -1, "recall_rebuild", knn_recall(sg.knn(), exact, o.k).recall);
+            }
         }
     }
 }
@@ -486,6 +577,131 @@ void exp_bridges(const Options& o, const Data& d, Csv* csv) {
             csv->row("bridges", d.name, n, d.dim, o.k, "max_antihubs", v, seed, -1,
                      "antihubs_selected", double(ss.antihubs_selected));
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// E2c -- how connected is the k-NN half, at full scale and as a function of k
+//
+// This exists because of a measurement hole. `components_before_repair` is
+// filled in by CoreSG::repair_connectivity *after* the bridges have been folded
+// into the component labelling, so on every full-scale run in the suite it
+// reports 1 by construction -- it says the bridges connected the graph, not how
+// far apart the graph was to begin with. The only arm that measures the k-NN
+// half alone lives in `bridges`, which caps n at the O(n^2) reference. So the
+// component count of the k-NN half at full scale has never been recorded, and
+// any claim of the form "this data set fragments into N pieces and the bridges
+// reduce it to 1" currently rests on N coming from somewhere else.
+//
+// The second arm is the one that may bite. Every fragmenting component count
+// this project quotes was measured with an *exact* k-NN half
+// (brute_force_limit = n). At full scale the half is NN-Descent, and its
+// residual errors are precisely long, cross-cluster edges -- exactly the edges
+// that would connect a graph the exact k-NN leaves in pieces. If the two arms
+// disagree, the approximation of the k-NN half is partially masking the
+// fragmentation the bridges exist to repair, and that has to be stated rather
+// than discovered by a reader. Both arms are measured here at matching n.
+//
+// The k sweep turns the project's most transferable observation -- that real
+// k-NN graphs are usually already connected -- from a single-k assertion into
+// a curve: the k at which each data set connects. That also prices the
+// "connectivity gate" idea, since `repair_seconds` is the cost of the check
+// and `bridge_seconds` on the gate arm is what the check would let you skip.
+// ---------------------------------------------------------------------------
+
+void exp_connectivity(const Options& o, const Data& d, Csv* csv) {
+    const std::vector<std::uint32_t> ks =
+        o.k_sweep.empty() ? std::vector<std::uint32_t>{4u, 8u, 16u, 24u, 32u, 48u, 64u}
+                          : parse_uint_list(o.k_sweep);
+    // The exact arm is O(n^2 d), so it runs at the same cap the other
+    // exact-reference experiments use -- and, critically, the approximate arm
+    // is measured at that same n as well, or the comparison confounds the k-NN
+    // half with the data set size.
+    const std::size_t n_exact = std::min(d.n, o.exact_limit);
+    std::printf("\n[connectivity] full n=%zu, matched n=%zu, k in {", d.n, n_exact);
+    for (std::uint32_t k : ks) std::printf("%u ", k);
+    std::printf("}\n");
+
+    for (int s = 0; s < std::min(o.seeds, 3); ++s) {
+        const std::uint64_t seed = 9100 + s;
+        for (std::uint32_t k : ks) {
+            Options local = o;
+            local.k = k;
+            const std::string ks_str = std::to_string(k);
+
+            // `None` + `ensure_connected = false` is what makes
+            // components_before_repair mean "components of the k-NN graph":
+            // nothing is folded in and nothing is repaired.
+            auto knn_only_params = [&](std::uint64_t sd) {
+                CoreSGParams p = base_params(local, d, sd);
+                p.missing_mode = MissingEdgeMode::None;
+                p.ensure_connected = false;
+                return p;
+            };
+
+            // Arm 1 -- full scale, approximate half. This is the number that
+            // describes what the bridges actually face in production.
+            {
+                CoreSG sg(knn_only_params(seed));
+                const CoreSGStats st = sg.build(d.values.data(), d.n, d.dim);
+                csv->row("connectivity", d.name, d.n, d.dim, k, "half_k", "approx_full@k" + ks_str,
+                         seed, -1, "components_knn_only", double(st.components_before_repair));
+                csv->row("connectivity", d.name, d.n, d.dim, k, "half_k", "approx_full@k" + ks_str,
+                         seed, -1, "knn_seconds", st.knn_seconds);
+                // What a connectivity check costs on its own. `conn_stats` is
+                // the union-find pass that derives the component labelling --
+                // the actual price of the gate. `repair_seconds` is only the
+                // fold-in of the bridges on top of an already-valid labelling,
+                // which is microseconds and would flatter the gate badly if
+                // quoted in its place.
+                csv->row("connectivity", d.name, d.n, d.dim, k, "half_k", "approx_full@k" + ks_str,
+                         seed, -1, "components_seconds", st.conn_stats.seconds);
+                csv->row("connectivity", d.name, d.n, d.dim, k, "half_k", "approx_full@k" + ks_str,
+                         seed, -1, "fold_in_seconds", st.repair_seconds);
+            }
+
+            // Arm 2 -- matched n, approximate half.
+            // Arm 3 -- matched n, exact half. The pair isolates the effect of
+            // approximating the k-NN half on connectivity, with n held equal.
+            if (n_exact >= 2) {
+                CoreSG approx(knn_only_params(seed));
+                const CoreSGStats sa = approx.build(d.values.data(), n_exact, d.dim);
+                csv->row("connectivity", d.name, n_exact, d.dim, k, "half_k",
+                         "approx_matched@k" + ks_str, seed, -1, "components_knn_only",
+                         double(sa.components_before_repair));
+
+                CoreSGParams pe = knn_only_params(seed);
+                pe.incr.brute_force_limit = n_exact;
+                CoreSG exact(pe);
+                const CoreSGStats se = exact.build(d.values.data(), n_exact, d.dim);
+                csv->row("connectivity", d.name, n_exact, d.dim, k, "half_k",
+                         "exact_matched@k" + ks_str, seed, -1, "components_knn_only",
+                         double(se.components_before_repair));
+                csv->row("connectivity", d.name, n_exact, d.dim, k, "half_k",
+                         "exact_matched@k" + ks_str, seed, -1, "knn_recall_of_approx_half",
+                         knn_recall(approx.knn(), exact.knn(), k).recall);
+            }
+        }
+
+        // The gate arm, at the data set's own k: what the bridges cost, against
+        // what the check that would skip them costs. Run once per seed, not per
+        // k, because it is a cost comparison rather than a sweep.
+        CoreSGParams pg = base_params(o, d, seed);
+        pg.missing_mode = MissingEdgeMode::AntiHub;
+        CoreSG gated(pg);
+        const CoreSGStats sg_st = gated.build(d.values.data(), d.n, d.dim);
+        csv->row("connectivity", d.name, d.n, d.dim, o.k, "gate", "antihub", seed, -1,
+                 "bridge_seconds", sg_st.missing_seconds);
+        csv->row("connectivity", d.name, d.n, d.dim, o.k, "gate", "antihub", seed, -1,
+                 "hubness_seconds", sg_st.hubness_seconds);
+        csv->row("connectivity", d.name, d.n, d.dim, o.k, "gate", "antihub", seed, -1,
+                 "components_seconds", sg_st.conn_stats.seconds);
+        csv->row("connectivity", d.name, d.n, d.dim, o.k, "gate", "antihub", seed, -1,
+                 "total_seconds", sg_st.total_seconds);
+        csv->row("connectivity", d.name, d.n, d.dim, o.k, "gate", "antihub", seed, -1,
+                 "bridge_fraction_of_build",
+                 (sg_st.hubness_seconds + sg_st.missing_seconds) /
+                     (sg_st.total_seconds + 1e-12));
     }
 }
 
@@ -842,6 +1058,310 @@ void exp_drift(const Options& o, const Data& d, Csv* csv) {
 }
 
 // ---------------------------------------------------------------------------
+// E8 -- amortised cost as a function of batch size
+//
+// The suite currently contains two batch sizes -- 6 250 points in
+// `incremental` and 900 in `drift` -- which is not a curve. It matters because
+// an update has a fixed cost that does not shrink with the batch: the hubness
+// refresh, the bridge MST over the anti-hub set, and the connectivity pass all
+// run once per insert regardless of how many points arrived. Below some batch
+// size that fixed cost stops being amortised and the structure is cheaper to
+// rebuild than to update, and where that crossover sits is the practical
+// question any reader with a stream will ask.
+//
+// The phase totals are emitted separately from the wall-clock total precisely
+// so the fixed part can be separated from the per-point part.
+// ---------------------------------------------------------------------------
+
+void exp_batch_size(const Options& o, const Data& d, Csv* csv) {
+    const std::size_t n = std::min(d.n, std::size_t(50000));
+    const std::vector<double> fractions =
+        o.batch_fractions.empty()
+            ? std::vector<double>{0.001, 0.005, 0.01, 0.05, 0.10, 0.25}
+            : parse_double_list(o.batch_fractions);
+    const std::size_t base = n / 2;
+    if (base == 0 || n <= base) {
+        std::printf("\n[batchsize] (too few points; skipped)\n");
+        return;
+    }
+    std::printf("\n[batchsize] n=%zu, base=%zu, %zu batch sizes\n", n, base, fractions.size());
+
+    // One exact reference for the whole experiment: every arm ends on the same
+    // n points in the same order, so recomputing it per arm would only buy
+    // O(n^2 d) of identical work.
+    ThreadPool pool(o.threads);
+    Dataset present(d.dim, d.metric);
+    present.append(d.values.data(), n);
+    const KnnGraph exact = brute_force_graph(present, o.k, &pool);
+
+    for (int s = 0; s < std::min(o.seeds, 3); ++s) {
+        const std::uint64_t seed = 9300 + s;
+        for (double frac : fractions) {
+            const std::size_t per_batch =
+                std::max<std::size_t>(1, static_cast<std::size_t>(frac * double(n)));
+            CoreSG sg(base_params(o, d, seed));
+            const CoreSGStats bs = sg.build(d.values.data(), base, d.dim);
+
+            double insert_total = 0.0, hubness_total = 0.0, bridge_total = 0.0;
+            double repair_total = 0.0, knn_total = 0.0;
+            std::size_t cursor = base, batches = 0;
+            while (cursor < n) {
+                const std::size_t count = std::min(per_batch, n - cursor);
+                const CoreSGStats st = sg.insert(d.values.data() + cursor * d.dim, count);
+                insert_total += st.total_seconds;
+                hubness_total += st.hubness_seconds;
+                bridge_total += st.missing_seconds;
+                repair_total += st.repair_seconds;
+                knn_total += st.knn_seconds;
+                cursor += count;
+                ++batches;
+            }
+
+            // Label by the requested fraction, not by the realised batch size,
+            // so arms line up across data sets of different n.
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%.4f", frac);
+            const std::string v = buf;
+            const std::size_t inserted = n - base;
+
+            csv->row("batchsize", d.name, n, d.dim, o.k, "batch_fraction", v, seed, -1,
+                     "batch_points", double(per_batch));
+            csv->row("batchsize", d.name, n, d.dim, o.k, "batch_fraction", v, seed, -1,
+                     "batches", double(batches));
+            csv->row("batchsize", d.name, n, d.dim, o.k, "batch_fraction", v, seed, -1,
+                     "build_seconds", bs.total_seconds);
+            csv->row("batchsize", d.name, n, d.dim, o.k, "batch_fraction", v, seed, -1,
+                     "insert_total_seconds", insert_total);
+            csv->row("batchsize", d.name, n, d.dim, o.k, "batch_fraction", v, seed, -1,
+                     "seconds_per_inserted_point", insert_total / double(inserted));
+            // The three phases that do not shrink with the batch. Their sum
+            // against `insert_total_seconds` is the amortisation story.
+            csv->row("batchsize", d.name, n, d.dim, o.k, "batch_fraction", v, seed, -1,
+                     "knn_total_seconds", knn_total);
+            csv->row("batchsize", d.name, n, d.dim, o.k, "batch_fraction", v, seed, -1,
+                     "hubness_total_seconds", hubness_total);
+            csv->row("batchsize", d.name, n, d.dim, o.k, "batch_fraction", v, seed, -1,
+                     "bridge_total_seconds", bridge_total);
+            csv->row("batchsize", d.name, n, d.dim, o.k, "batch_fraction", v, seed, -1,
+                     "repair_total_seconds", repair_total);
+            csv->row("batchsize", d.name, n, d.dim, o.k, "batch_fraction", v, seed, -1,
+                     "fixed_phase_fraction",
+                     (hubness_total + bridge_total + repair_total) / (insert_total + 1e-12));
+            csv->row("batchsize", d.name, n, d.dim, o.k, "batch_fraction", v, seed, -1,
+                     "recall_final", knn_recall(sg.knn(), exact, o.k).recall);
+        }
+
+        // The line the curve is read against: one rebuild of the same n.
+        CoreSG rebuilt(base_params(o, d, seed));
+        const CoreSGStats rs = rebuilt.build(d.values.data(), n, d.dim);
+        csv->row("batchsize", d.name, n, d.dim, o.k, "batch_fraction", "rebuild", seed, -1,
+                 "insert_total_seconds", rs.total_seconds);
+        csv->row("batchsize", d.name, n, d.dim, o.k, "batch_fraction", "rebuild", seed, -1,
+                 "recall_final", knn_recall(rebuilt.knn(), exact, o.k).recall);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// E9 -- do the CPU and CUDA backends agree?
+//
+// Backend parity is covered by a unit test and by `preflight`, but no
+// experiment writes it to the CSV, so the honest answer to "do the backends
+// produce the same graph?" has been "a unit test says so". This puts a
+// measurement behind it.
+//
+// Note what is and is not being claimed. The two arms are two separately built
+// CoreSG objects, which elsewhere in this suite is a trap -- NN-Descent is
+// randomised and race-tolerant, so two builds differ even at one seed, and
+// attributing that difference to anything other than the thing under test is
+// how wrong tables get made. Here the backend *is* the thing under test and
+// everything else is held fixed, so the comparison is the right one. The
+// weight ratio is reported as a symmetric agreement measure between two
+// approximations, not as approx/exact: unlike in `bridges`, a value below 1.0
+// is legitimate here and means only that the CPU arm happened to find a
+// slightly heavier tree.
+// ---------------------------------------------------------------------------
+
+void exp_parity(const Options& o, const Data& d, Csv* csv) {
+    const std::size_t n = std::min(d.n, std::size_t(50000));
+    std::printf("\n[parity] n=%zu, CPU vs CUDA\n", n);
+    if (enumerate_cuda_devices().empty()) {
+        std::printf("  (no CUDA devices -- nothing to compare; rerun where a GPU exists)\n");
+        return;
+    }
+
+    ThreadPool pool(o.threads);
+    Dataset present(d.dim, d.metric);
+    present.append(d.values.data(), n);
+    const KnnGraph exact = brute_force_graph(present, o.k, &pool);
+
+    for (int s = 0; s < std::min(o.seeds, 3); ++s) {
+        const std::uint64_t seed = 9400 + s;
+
+        CoreSGParams pg = base_params(o, d, seed);
+        pg.backend.prefer_gpu = true;
+        CoreSG gpu(pg);
+        const CoreSGStats gs = gpu.build(d.values.data(), n, d.dim);
+
+        CoreSGParams pc = base_params(o, d, seed);
+        pc.backend.prefer_gpu = false;
+        CoreSG cpu(pc);
+        const CoreSGStats cs = cpu.build(d.values.data(), n, d.dim);
+
+        // Proof the GPU arm really used a device. Without it a silent host
+        // demotion would make the two arms agree perfectly and mean nothing.
+        csv->row("parity", d.name, n, d.dim, o.k, "backend", "cuda", seed, -1, "jobs_on_device",
+                 double(gs.knn_stats.jobs_on_device));
+        csv->row("parity", d.name, n, d.dim, o.k, "backend", "cpu", seed, -1, "jobs_on_device",
+                 double(cs.knn_stats.jobs_on_device));
+
+        auto emit_arm = [&](const char* label, const CoreSG& sg, const CoreSGStats& st) {
+            csv->row("parity", d.name, n, d.dim, o.k, "backend", label, seed, -1, "build_seconds",
+                     st.total_seconds);
+            csv->row("parity", d.name, n, d.dim, o.k, "backend", label, seed, -1, "recall",
+                     knn_recall(sg.knn(), exact, o.k).recall);
+            csv->row("parity", d.name, n, d.dim, o.k, "backend", label, seed, -1,
+                     "antihubs_selected", double(st.antihubs_selected));
+            csv->row("parity", d.name, n, d.dim, o.k, "backend", label, seed, -1,
+                     "components_before_repair", double(st.components_before_repair));
+        };
+        emit_arm("cuda", gpu, gs);
+        emit_arm("cpu", cpu, cs);
+
+        // Agreement of what the two graphs actually produce downstream.
+        const std::uint32_t mpts = std::min<std::uint32_t>(o.k, 8);
+        const MstResult mg = gpu.mst(mpts);
+        const MstResult mc = cpu.mst(mpts);
+        const MstComparison c = compare_msts(mg, mc);
+        csv->row("parity", d.name, n, d.dim, o.k, "backend", "gpu_over_cpu", seed, -1,
+                 "mst_weight_ratio_symmetric", c.weight_ratio);
+        csv->row("parity", d.name, n, d.dim, o.k, "backend", "gpu_over_cpu", seed, -1,
+                 "max_weight_profile_gap", c.max_edge_weight_gap);
+
+        double thresh = 0.0;
+        for (const Edge& e : mc.edges) thresh += e.w;
+        thresh /= double(mc.edges.empty() ? 1 : mc.edges.size());
+        const std::vector<idx_t> lg =
+            dbscan_labels_from_mst(mg, static_cast<idx_t>(n), thresh, nullptr);
+        const std::vector<idx_t> lc =
+            dbscan_labels_from_mst(mc, static_cast<idx_t>(n), thresh, nullptr);
+        csv->row("parity", d.name, n, d.dim, o.k, "backend", "gpu_over_cpu", seed, -1,
+                 "ari_gpu_vs_cpu", adjusted_rand_index(lg, lc));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// E10 -- streaming export, so the FISHDBC comparison can actually be joined
+//
+// FISHDBC is the only external baseline, and as the suite stood the two sides
+// could not be put in one table. `scripts/baseline_fishdbc.py` scores FISHDBC
+// against sklearn's HDBSCAN* (EOM extraction at a given min_cluster_size);
+// every CORE-SG experiment scores DBSCAN* (a flat cut of the MST) against the
+// exact CORE-SG. Two different clusterings measured against two different
+// references do not compare, whatever the numbers say.
+//
+// The fix is to make this side emit the one artefact that is method-neutral --
+// the MST -- and let the driver script turn it into HDBSCAN* labels with the
+// *same* extraction code FISHDBC itself calls (label -> condense_tree ->
+// get_clusters). Then the only thing that differs between the two rows is the
+// MST each method produced, which is exactly the thing under test.
+//
+// The arrival order is supplied by the driver rather than generated here: both
+// methods must see the same points at the same batch, and reproducing numpy's
+// PCG64 permutation in C++ is not worth the risk of getting it subtly wrong.
+// ---------------------------------------------------------------------------
+
+void write_mst_file(const std::string& path, std::size_t n, const MstResult& mst) {
+    std::ofstream f(path, std::ios::binary);
+    if (!f) throw std::runtime_error("cannot open " + path + " for writing");
+    const std::uint64_t header[2] = {static_cast<std::uint64_t>(n),
+                                     static_cast<std::uint64_t>(mst.edges.size())};
+    f.write(reinterpret_cast<const char*>(header), sizeof(header));
+    for (const Edge& e : mst.edges) {
+        const std::uint32_t uv[2] = {e.u, e.v};
+        const float w = e.w;
+        f.write(reinterpret_cast<const char*>(uv), sizeof(uv));
+        f.write(reinterpret_cast<const char*>(&w), sizeof(w));
+    }
+    if (!f) throw std::runtime_error("failed writing " + path);
+}
+
+std::vector<idx_t> read_order_file(const std::string& path, std::size_t n) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) throw std::runtime_error("cannot open order file " + path);
+    std::vector<std::int32_t> raw(n);
+    f.read(reinterpret_cast<char*>(raw.data()), std::streamsize(n * sizeof(std::int32_t)));
+    if (static_cast<std::size_t>(f.gcount()) != n * sizeof(std::int32_t)) {
+        throw std::runtime_error("order file " + path + " is shorter than the data set");
+    }
+    std::vector<idx_t> order(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (raw[i] < 0 || static_cast<std::size_t>(raw[i]) >= n) {
+            throw std::runtime_error("order file " + path + " has an out-of-range index");
+        }
+        order[i] = static_cast<idx_t>(raw[i]);
+    }
+    return order;
+}
+
+void exp_stream_mst(const Options& o, const Data& d, Csv* csv) {
+    if (o.order_file.empty() || o.mst_dir.empty()) {
+        std::printf("\n[stream] needs --order-file and --mst-dir "
+                    "(run it via scripts/compare_incremental.py); skipped\n");
+        return;
+    }
+    const std::vector<idx_t> order = read_order_file(o.order_file, d.n);
+    const std::size_t base = static_cast<std::size_t>(o.base_fraction * double(d.n));
+    const std::size_t per_batch = (d.n - base) / std::max(1, o.batches);
+    if (per_batch == 0) {
+        std::printf("\n[stream] (too few points for %d batches; skipped)\n", o.batches);
+        return;
+    }
+    std::printf("\n[stream] n=%zu, base=%zu, %d batches, exporting MST at mpts=%u\n", d.n, base,
+                o.batches, o.export_mpts);
+
+    // One run only: the driver invokes this once per seed so that the order
+    // file, the seed label and the reference clustering all line up.
+    const std::uint64_t seed = o.seed_base;
+    CoreSGParams p = base_params(o, d, seed);
+    CoreSG sg(p);
+
+    std::vector<float> head = gather_rows(d, order, 0, base);
+    const CoreSGStats bs = sg.build(head.data(), base, d.dim);
+    csv->row("stream_coresg", d.name, base, d.dim, o.k, "method", "coresg", seed, 0,
+             "build_seconds", bs.total_seconds);
+
+    double cumulative = bs.total_seconds;
+    std::size_t cursor = base;
+    for (int b = 0; b < o.batches && cursor < d.n; ++b) {
+        const std::size_t count = std::min(per_batch, d.n - cursor);
+        std::vector<float> chunk = gather_rows(d, order, cursor, cursor + count);
+        const CoreSGStats st = sg.insert(chunk.data(), count);
+        cumulative += st.total_seconds;
+        cursor += count;
+
+        const long batch = b + 1;
+        const auto t0 = Clock::now();
+        const MstResult mst = sg.mst(o.export_mpts);
+        const double mst_seconds = since(t0);
+        write_mst_file(o.mst_dir + "/" + d.name + "_seed" + std::to_string(seed) + "_batch" +
+                           std::to_string(batch) + ".mst",
+                       cursor, mst);
+
+        csv->row("stream_coresg", d.name, cursor, d.dim, o.k, "method", "coresg", seed, batch,
+                 "insert_seconds", st.total_seconds);
+        csv->row("stream_coresg", d.name, cursor, d.dim, o.k, "method", "coresg", seed, batch,
+                 "cumulative_seconds", cumulative);
+        csv->row("stream_coresg", d.name, cursor, d.dim, o.k, "method", "coresg", seed, batch,
+                 "throughput_points_per_sec", double(count) / st.total_seconds);
+        // Extraction is charged separately: FISHDBC pays the same cost in its
+        // `cluster()` call, which the baseline records as
+        // `cluster_extract_seconds`.
+        csv->row("stream_coresg", d.name, cursor, d.dim, o.k, "method", "coresg", seed, batch,
+                 "cluster_extract_seconds", mst_seconds);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // E5 -- sensitivity to the parameters a reader will ask about
 // ---------------------------------------------------------------------------
 
@@ -869,6 +1389,15 @@ void exp_sensitivity(const Options& o, const Data& d, Csv* csv) {
                  "components_before_repair", double(us.components_before_repair));
         csv->row("sensitivity", d.name, n, d.dim, p.k_max, config, value, seed, -1,
                  "bridge_seconds", us.missing_seconds);
+        // Emitted so the refinement sweep is readable: `refine_max_fraction`
+        // was found to be saturated at its ceiling on every data set and every
+        // batch, which means the measurement was reporting the cap rather than
+        // the algorithm's own appetite. These two say whether that is still
+        // true at a given setting.
+        csv->row("sensitivity", d.name, n, d.dim, p.k_max, config, value, seed, -1,
+                 "refine_nodes_fraction", double(us.knn_stats.refine_nodes) / double(us.n));
+        csv->row("sensitivity", d.name, n, d.dim, p.k_max, config, value, seed, -1,
+                 "refine_capped", us.knn_stats.refine_capped ? 1.0 : 0.0);
         // No MST-quality ratio here on purpose. Two separately built CoreSGs
         // get two different (randomised, race-tolerant) k-NN halves, and that
         // variation is larger than the bridge effect being probed -- it shows
@@ -884,6 +1413,28 @@ void exp_sensitivity(const Options& o, const Data& d, Csv* csv) {
 
     for (int s = 0; s < std::min(o.seeds, 3); ++s) {
         const std::uint64_t seed = 6000 + s;
+
+        // Reference arm, and the sweep below is uninterpretable without it.
+        // `antihub_multiplier` and `min_per_component` govern bridge coverage,
+        // so the metric that can move for them is `components_before_repair`.
+        // But a flat 1 across every setting has two completely different
+        // explanations -- "the quota is doing its job" and "the k-NN graph was
+        // already connected, so there was never anything to cover" -- and only
+        // the component count of the k-NN half alone tells them apart. An
+        // earlier reading of this sweep put the flatness down to the choice of
+        // metric; on these data sets it was the data.
+        {
+            CoreSGParams pk = base_params(o, d, seed);
+            pk.missing_mode = MissingEdgeMode::None;
+            pk.ensure_connected = false;
+            CoreSG bare(pk);
+            const std::size_t half = n / 2;
+            bare.build(d.values.data(), half, d.dim);
+            const CoreSGStats bu = bare.insert(d.values.data() + half * d.dim, n - half);
+            csv->row("sensitivity", d.name, n, d.dim, o.k, "reference", "knn_only", seed, -1,
+                     "components_knn_only", double(bu.components_before_repair));
+        }
+
         for (std::uint32_t k : {8u, 16u, 32u, 64u}) {
             Options local = o;
             local.k = k;
@@ -912,6 +1463,112 @@ void exp_sensitivity(const Options& o, const Data& d, Csv* csv) {
             p.incr.refine_nnd.sample = smp;
             measure("sample_size", std::to_string(smp), p, seed);
         }
+        // Refinement cap policy -- the knob that trades update cost against
+        // update quality, and the only one measured as binding on every data
+        // set and every batch. Two families, and the comparison between them is
+        // the point:
+        //
+        //   fractional  the shipped default. The refinement set is capped at a
+        //               fraction of *n*, so it grows as the graph grows: an
+        //               update costs Theta(n) however few points arrived.
+        //   absolute    a fixed ceiling (`refine_max_nodes`, disabled by
+        //               default). The set stops growing, so an update costs
+        //               Theta(batch).
+        //
+        // That difference is invisible at one graph size, so per-batch rows are
+        // emitted alongside the totals. Within a single run the graph doubles
+        // from n/2 to n, and the fractional arms' `insert_seconds` should climb
+        // across the batches while the absolute arms' stay flat. This is the
+        // measurement behind the one place a streaming competitor looks better:
+        // FISHDBC's per-batch cost is flat because HNSW insertion is O(log n)
+        // per point, while a cap expressed as a fraction of n makes this
+        // project's Theta(n). If an absolute cap holds quality at a flat slope,
+        // adopting it is a one-line default change with a real result behind it.
+        //
+        // None of this can use `measure`. That helper inserts the whole second
+        // half in one batch, so the new points alone are 50 % of the graph --
+        // and since the refinement set is built new points -> first ring ->
+        // second ring and the cap drops the outermost nodes first, every
+        // fractional setting below 0.5 collapses to exactly 0.5 and the knob
+        // appears to do nothing. The cap can only bind on the rings when the
+        // batch is small, so this sweep runs the realistic shape: many small
+        // batches.
+        struct RefineCap {
+            const char* name;
+            double fraction;
+            std::size_t nodes;  ///< 0 leaves the absolute ceiling disabled
+        };
+        const RefineCap refine_caps[] = {
+            {"frac_0.05", 0.05, 0},
+            {"frac_0.10", 0.10, 0},
+            {"frac_0.25", 0.25, 0},   // the current default
+            {"frac_0.50", 0.50, 0},
+            {"frac_1.00", 1.00, 0},   // uncapped: the quality ceiling to read the rest against
+            {"nodes_1000", 1.00, 1000},
+            {"nodes_2500", 1.00, 2500},
+            {"nodes_5000", 1.00, 5000},
+            {"nodes_10000", 1.00, 10000},
+        };
+        for (const RefineCap& capcfg : refine_caps) {
+            CoreSGParams p = base_params(o, d, seed);
+            p.incr.refine_max_fraction = capcfg.fraction;
+            p.incr.refine_max_nodes = capcfg.nodes;
+            const std::string value = capcfg.name;
+
+            CoreSG sg(p);
+            const std::size_t base = n / 2;
+            const std::size_t per_batch = (n - base) / std::max(1, o.batches);
+            if (per_batch == 0) continue;
+            const CoreSGStats bs = sg.build(d.values.data(), base, d.dim);
+
+            double insert_total = 0.0, refine_total = 0.0, refine_frac_sum = 0.0;
+            std::size_t cursor = base, batches = 0, capped = 0;
+            while (cursor < n) {
+                const std::size_t count = std::min(per_batch, n - cursor);
+                const CoreSGStats st = sg.insert(d.values.data() + cursor * d.dim, count);
+                insert_total += st.total_seconds;
+                refine_total += st.knn_stats.refine_seconds;
+                refine_frac_sum += double(st.knn_stats.refine_nodes) / double(st.n);
+                capped += st.knn_stats.refine_capped ? 1 : 0;
+                ++batches;
+
+                // The slope. `n` on these rows is the graph size at that
+                // moment, which is what per-batch cost has to be plotted
+                // against for the Theta(n)-vs-Theta(batch) question to be
+                // answerable at all.
+                const long batch = static_cast<long>(batches);
+                csv->row("sensitivity", d.name, st.n, d.dim, p.k_max, "refine_cap", value, seed,
+                         batch, "insert_seconds", st.total_seconds);
+                csv->row("sensitivity", d.name, st.n, d.dim, p.k_max, "refine_cap", value, seed,
+                         batch, "refine_seconds", st.knn_stats.refine_seconds);
+                csv->row("sensitivity", d.name, st.n, d.dim, p.k_max, "refine_cap", value, seed,
+                         batch, "refine_nodes", double(st.knn_stats.refine_nodes));
+                csv->row("sensitivity", d.name, st.n, d.dim, p.k_max, "refine_cap", value, seed,
+                         batch, "seconds_per_new_point", st.total_seconds / double(count));
+                cursor += count;
+            }
+
+            csv->row("sensitivity", d.name, n, d.dim, p.k_max, "refine_cap", value, seed, -1,
+                     "build_seconds", bs.total_seconds);
+            csv->row("sensitivity", d.name, n, d.dim, p.k_max, "refine_cap", value, seed, -1,
+                     "insert_seconds", insert_total);
+            csv->row("sensitivity", d.name, n, d.dim, p.k_max, "refine_cap", value, seed, -1,
+                     "refine_seconds", refine_total);
+            csv->row("sensitivity", d.name, n, d.dim, p.k_max, "refine_cap", value, seed, -1,
+                     "refine_nodes_fraction", refine_frac_sum / double(batches));
+            csv->row("sensitivity", d.name, n, d.dim, p.k_max, "refine_cap", value, seed, -1,
+                     "refine_capped", double(capped) / double(batches));
+            // The slope itself, as one number: last batch's cost over the
+            // first's. ~1.0 means the update is Theta(batch); ~2.0 means it
+            // tracked the graph doubling, i.e. Theta(n).
+            csv->row("sensitivity", d.name, n, d.dim, p.k_max, "refine_cap", value, seed, -1,
+                     "batches", double(batches));
+            if (can_reference) {
+                KnnGraph exact = brute_force_graph(ref, p.k_max, sg.pool());
+                csv->row("sensitivity", d.name, n, d.dim, p.k_max, "refine_cap", value, seed, -1,
+                         "recall", knn_recall(sg.knn(), exact, p.k_max).recall);
+            }
+        }
     }
 }
 
@@ -920,12 +1577,17 @@ void exp_sensitivity(const Options& o, const Data& d, Csv* csv) {
 void usage() {
     std::printf(
         "coresg_exp -- thesis experiment harness (long-format CSV)\n\n"
-        "  --experiment  incremental|arrival|bridges|budget|mpts|scaling|sensitivity|all\n"
+        "  --experiment  incremental|arrival|bridges|connectivity|budget|mpts|scaling|\n"
+        "                drift|sensitivity|batchsize|parity|stream|all\n"
         "  --data FILE [--dim D] [--limit N] [--name LABEL]   or  --synthetic N\n"
         "  --dim D --clusters C     (synthetic only)\n"
         "  --k K --metric l2|cosine|l1\n"
         "  --seeds S --batches B --base-fraction F\n"
         "  --exact-limit N          ceiling for the O(n^2) references\n"
+        "  --k-sweep 4,8,16,...     k values for `connectivity`\n"
+        "  --batch-fractions a,b,c  batch sizes for `batchsize`, as fractions of n\n"
+        "  --order-file F --mst-dir D --export-mpts M --seed-base S   (`stream`;\n"
+        "                           driven by scripts/compare_incremental.py)\n"
         "  --gpu 0|1 --threads T\n"
         "  --out results.csv --quiet\n");
 }
@@ -952,6 +1614,12 @@ int main(int argc, char** argv) {
         else if (a == "--exact-limit") o.exact_limit = std::strtoull(next().c_str(), nullptr, 10);
         else if (a == "--gpu") o.gpu = std::atoi(next().c_str()) != 0;
         else if (a == "--scaling-instances") o.scaling_instances = next();
+        else if (a == "--k-sweep") o.k_sweep = next();
+        else if (a == "--batch-fractions") o.batch_fractions = next();
+        else if (a == "--order-file") o.order_file = next();
+        else if (a == "--mst-dir") o.mst_dir = next();
+        else if (a == "--export-mpts") o.export_mpts = std::strtoul(next().c_str(), nullptr, 10);
+        else if (a == "--seed-base") o.seed_base = std::strtoull(next().c_str(), nullptr, 10);
         else if (a == "--no-oom-fallback") o.oom_fallback = false;
         else if (a == "--skip-cpu-scaling") o.skip_cpu_scaling = true;
         else if (a == "--threads") o.threads = std::strtoul(next().c_str(), nullptr, 10);
@@ -970,11 +1638,17 @@ int main(int argc, char** argv) {
         if (all || e == "incremental") exp_incremental(o, d, &csv, Arrival::Shuffled);
         if (all || e == "arrival") exp_incremental(o, d, &csv, Arrival::Grouped);
         if (all || e == "bridges") exp_bridges(o, d, &csv);
+        if (all || e == "connectivity") exp_connectivity(o, d, &csv);
         if (all || e == "budget") exp_budget_dimension(o, d, &csv);
         if (all || e == "mpts") exp_mpts(o, d, &csv);
         if (all || e == "scaling") exp_scaling(o, d, &csv);
         if (all || e == "drift") exp_drift(o, d, &csv);
         if (all || e == "sensitivity") exp_sensitivity(o, d, &csv);
+        if (all || e == "batchsize") exp_batch_size(o, d, &csv);
+        if (all || e == "parity") exp_parity(o, d, &csv);
+        // `stream` is deliberately NOT in `all`: it only does anything when the
+        // driver script supplies an arrival order and an output directory.
+        if (e == "stream") exp_stream_mst(o, d, &csv);
 
         std::printf("\nwrote %s\n", o.out.c_str());
     } catch (const std::exception& ex) {

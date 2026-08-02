@@ -147,8 +147,33 @@ MATRIX = [
     ("mpts", ["manifold_exact", "fma_mfcc", "20ng_pca500", "sift1m"],
      dict(exact_limit=5000)),
 
-    # Parameter sensitivity.
-    ("sensitivity", ["manifold_mid", "fma_mfcc", "sift1m"], dict()),
+    # How connected is the k-NN half, at full scale and as a function of k.
+    # Runs on everything, and cheaply -- a k-NN build plus a union-find per k,
+    # no MST and no quadratic reference except on the matched-n arm. It closes
+    # the hole that `components_before_repair` is recorded *after* the bridges
+    # are folded in, so no full-scale run in this suite has ever measured the
+    # component count of the k-NN graph itself.
+    ("connectivity", ["manifold_exact", "manifold_c8", "manifold_c24", "manifold_c32",
+                      "manifold_mid", "manifold_wide", "fma_chroma", "fma_mfcc",
+                      "20ng_pca500", "20ng_tfidf", "sift1m", "gist1m", "glove100"],
+     dict(exact_limit=4000, seeds=3)),
+
+    # Parameter sensitivity. manifold_c24 and manifold_wide are here because
+    # the other three do NOT fragment: `components_before_repair` came back as
+    # 1 for every configuration including min_per_component=0, so the bridge
+    # coverage knobs had nothing to act on and the sweep looked flat for a
+    # reason that had nothing to do with the knobs. The `reference/knn_only`
+    # row emitted by the experiment is what makes that readable.
+    ("sensitivity", ["manifold_mid", "manifold_wide", "manifold_c24", "fma_mfcc", "sift1m"],
+     dict(batches=8)),
+
+    # Amortised cost as a function of batch size, and the rebuild line it is
+    # read against.
+    ("batchsize", ["manifold_mid", "manifold_c24", "fma_mfcc", "sift1m"], dict(seeds=3)),
+
+    # Backend agreement, so "do the CPU and GPU paths produce the same graph?"
+    # rests on measurements rather than on a unit test.
+    ("parity", ["manifold_mid", "fma_mfcc", "sift1m"], dict(seeds=3)),
 
     # Long-horizon drift: many small batches, quality sampled at every one.
     ("drift", ["manifold_mid", "manifold_wide", "fma_mfcc", "sift1m"], dict(batches=25)),
@@ -165,6 +190,17 @@ MATRIX = [
     # turning into a multi-hour CPU descent over 10M points.
     ("scaling", ["capacity10m"],
      dict(tag="oom", scaling_instances="1,2", seeds=1, no_oom_fallback=True,
+          skip_cpu_scaling=True)),
+
+    # The probe above still did not exceed a card: `insert` builds
+    # base + batch = 5M + 1.25M points per instance, not the full 10M, so one
+    # instance needed 4.94 GiB and fitted comfortably. k=128 doubles the
+    # per-point neighbourhood and takes the same configuration to ~8.3 GiB,
+    # which is over an 8 GB card -- so this is the run where instances=1 must
+    # actually fail and instances=4 must complete. That is the whole capacity
+    # argument, and until this runs it is arithmetic rather than a measurement.
+    ("scaling", ["capacity10m"],
+     dict(tag="oom128", k=128, scaling_instances="1,4", seeds=1, no_oom_fallback=True,
           skip_cpu_scaling=True)),
 ]
 
@@ -216,11 +252,14 @@ EXPERIMENT_ROW_NAME = {
     "incremental": "incremental",
     "arrival": "arrival_order",
     "bridges": "bridges",
+    "connectivity": "connectivity",
     "budget": "budget_dim",
     "mpts": "mpts_sweep",
     "scaling": "scaling",
     "sensitivity": "sensitivity",
     "drift": "drift",
+    "batchsize": "batchsize",
+    "parity": "parity",
 }
 
 
@@ -251,14 +290,22 @@ def build_commands(args):
             # Per-row seeds override the global default: bridges/budget are
             # deterministic, capacity is expensive.
             seeds = extra.get("seeds", args.seeds)
+            # `k` is a property of the data set, but one run overrides it: the
+            # capacity probe exists to reach a per-instance footprint that does
+            # not fit a card, and k is the term that gets it there.
+            k = extra.get("k", spec.get("k", 32))
             cmd = [exe, "--experiment", experiment,
                    "--data", spec["path"], "--name", label,
-                   "--k", str(spec.get("k", 32)),
+                   "--k", str(k),
                    "--metric", spec.get("metric", "l2"),
                    "--seeds", str(seeds),
                    "--out", args.out, "--quiet"]
             if extra.get("scaling_instances"):
                 cmd += ["--scaling-instances", extra["scaling_instances"]]
+            if extra.get("k_sweep"):
+                cmd += ["--k-sweep", extra["k_sweep"]]
+            if extra.get("batch_fractions"):
+                cmd += ["--batch-fractions", extra["batch_fractions"]]
             if extra.get("no_oom_fallback"):
                 cmd += ["--no-oom-fallback"]
             if extra.get("skip_cpu_scaling"):
@@ -271,7 +318,7 @@ def build_commands(args):
                 cmd += ["--batches", str(extra["batches"])]
             if not args.gpu:
                 cmd += ["--gpu", "0"]
-            cmds.append((cmd, f"{experiment:<12} {label:<24} k={spec.get('k', 32)}"))
+            cmds.append((cmd, f"{experiment:<12} {label:<24} k={k}"))
     return cmds
 
 
