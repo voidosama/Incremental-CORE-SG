@@ -24,7 +24,7 @@
 % ---------------------------------------------------------------------------
 \makeatletter
 \let\accessyearsetter\year
-\def\year{2026}          % TODO: publication year, also used by the page footer
+\def\year{2026}
 \makeatother
 
 % ---------------------------------------------------------------------------
@@ -57,6 +57,30 @@
 \newcommand{\mpts}{m_{\mathrm{pts}}}
 \newcommand{\mrd}{d_{\mathrm{mreach}}}
 \newcommand{\coredist}{d_{\mathrm{core}}}
+
+% ---------------------------------------------------------------------------
+% ieeeaccess.cls defines accessblue as a PANTONE *spot* colour through the
+% spotcolor package (cls lines 126-130). On current TeX Live that produces a
+% colour space viewers reject: the log fills with "Package xcolor Warning:
+% Incompatible color definition", the PDF reports "Bad color space
+% 'PANTONE3015C'", and everything drawn in accessblue renders invisible. That is
+% the title (cls line 548), all section headings (cls line 144), the ABSTRACT and
+% INDEX TERMS labels, and the "FIGURE n."/"TABLE n." caption labels. Subsection
+% headings survive because they use greycolor, which is already plain CMYK.
+%
+% Redefining accessblue in CMYK fixes it. The values are the ones the class
+% itself assigns the spot colour on cls line 128, {1 0.3 0 0.2}, so the printed
+% colour is unchanged and only the colour space differs. This must come after
+% every \usepackage, because pgfplots pulls in xcolor and xcolor reinitialises
+% the colour system. Remove it if IEEE's production system resolves the spot
+% colour correctly.
+% ---------------------------------------------------------------------------
+\definecolor{accessblue}{cmyk}{1,0.3,0,0.2}
+
+% Publication year. The class turns \year into a setter storing into \theyear
+% (default 2016, shown in the page footer). Because the block above needs \year
+% to stay numeric, set \theyear directly rather than calling \year{...}.
+\def\theyear{2026}          % TODO: publication year
 
 \begin{document}
 \history{Date of publication xxxx 00, 0000, date of current version xxxx 00, 0000.}
