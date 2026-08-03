@@ -13,6 +13,32 @@
 % TODO before submission: search for "TODO".
 % ---------------------------------------------------------------------------
 \documentclass{ieeeaccess}
+
+% ---------------------------------------------------------------------------
+% ieeeaccess.cls redefines the TeX primitive \year as a one-argument setter
+% (\def\year#1{\gdef\theyear{#1}}, cls line 359), so \number\year no longer
+% expands to a number. pgfmath initialises its random seed from it and fails
+% with "Missing number, treated as zero" the moment pgfplots is loaded. Restore
+% a numeric \year here; set the publication year through \theyear instead of
+% \year{...}. Remove this block only if the figures stop using pgfplots.
+% ---------------------------------------------------------------------------
+\makeatletter
+\let\accessyearsetter\year
+\def\year{2026}          % TODO: publication year, also used by the page footer
+\makeatother
+
+% ---------------------------------------------------------------------------
+% ieeeaccess.cls sets \xfigwd only inside its own \Figure macro (cls line 277),
+% which wraps \includegraphics. Its \@makecaption then tests \ifdim\xfigwd
+% (cls line 227), so ANY figure environment that is not an included image file,
+% such as every TikZ or pgfplots figure here, fails with an undefined control
+% sequence at the caption. Providing a zero default selects the ordinary
+% column-width caption branch, which is correct for single-column figures. The
+% class overwrites this whenever \Figure is used, so image figures are
+% unaffected. Revisit if a full-width figure* is ever added.
+% ---------------------------------------------------------------------------
+\providecommand{\xfigwd}{0pt}
+
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{algorithmic}
@@ -107,10 +133,11 @@ minimum spanning tree, nearest neighbour graph
 first reweights the space by a local density estimate, and that estimate is
 governed by a smoothing parameter, $\mpts$, that no principled procedure selects
 in advance. Because no single value is appropriate for data whose components
-differ in density, which is common, it is common to sweep $\mpts$ and inspect
-the resulting hierarchies. The cost of that sweep is steep as the clustering for
-a given $\mpts$ is determined by a minimum spanning tree (MST) of a complete
-graph, and recomputing one per parameter value costs $O(n^2 d)$ each time.
+differ in density, which is the usual case, it is common to sweep $\mpts$ and
+inspect the resulting hierarchies. The cost of that sweep is steep, as the
+clustering for a given $\mpts$ is determined by a minimum spanning tree (MST) of
+a complete graph, and recomputing one per parameter value costs $O(n^2 d)$ each
+time.
 
 The CORE-SG replacement graph \cite{coresg} removes that barrier. A single
 graph, built once, provably contains an MST of the complete
@@ -157,7 +184,7 @@ different reasons and admit different remedies.
 \section{Background and Related Work}
 % ===========================================================================
 
-\subsection{Density-Based Clustering and \texorpdfstring{$\mpts$}{mpts}}
+\subsection{Density-Based Clustering and the Smoothing Parameter}
 
 Given a data set $X \subset \mathbb{R}^d$ of $n$ points and a smoothing
 parameter $\mpts$, the \emph{core distance} of a point $x \in X$ is the distance
@@ -211,7 +238,7 @@ inter-point distance dominates both core distances: long edges bridging
 components the neighbourhoods cannot reach. $\mathrm{MST}_{\kmax}$ supplies
 those.
 
-\subsection{Approximate \texorpdfstring{$k$}{k}-NN Graph Construction}
+\subsection{Approximate $k$-NN Graph Construction}
 
 NN-Descent \cite{nndescent} builds an approximate $k$-NN graph from the
 principle that a neighbour of a neighbour is a likely neighbour, converging in a
@@ -323,7 +350,7 @@ both operate on objects far smaller than the data set.}
 \label{fig:pipeline}
 \end{figure}
 
-\subsection{The \texorpdfstring{$k$}{k}-NN Graph: Sampled Instances}
+\subsection{The $k$-NN Graph: Sampled Instances}
 \label{sec:knn}
 
 An \emph{instance} is a random sample of the existing base points unioned with
@@ -984,11 +1011,12 @@ restricted descent that follows a batch (Section~\ref{sec:knn}); a larger cap
 lets more existing points revise their neighbour lists after new data arrives.
 Quality is monotone in that cap, and how much it matters is a property of the
 data: 0.007 percentage points of recall on \texttt{fma\_mfcc} against 0.72 on
-\texttt{manifold\_wide}, for 0.6\% more time. A cap expressed as a fraction of
-$n$ keeps an update linear in $n$, which is already far better than the
-quadratic cost of a rebuild, but an absolute ceiling would make it depend on the
-batch alone. Whether such a ceiling retains quality as $n$ grows is a question
-left open. All reported results use the same shipped value.
+\texttt{manifold\_wide}, for 0.6\% more time. The cap is expressed as a fraction
+of $n$, which makes the cost of an update linear in $n$ against the quadratic
+cost of the rebuild it replaces. Expressing it instead as an absolute ceiling
+would tie the refinement set to the batch size alone, and whether that retains
+quality as $n$ grows is a question left open. All reported results use the same
+shipped value.
 
 % ===========================================================================
 \section{Conclusion and Future Work}
