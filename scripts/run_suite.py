@@ -143,6 +143,19 @@ MATRIX = [
                      "20ng_pca500", "sift1m", "gist1m", "glove100"], dict(batches=8)),
     ("arrival", ["manifold_mid", "fma_mfcc", "sift1m"], dict(batches=8)),
 
+    # The insertion strategy A/B, and the experiment that decides whether an
+    # update costs O(batch) or O(n_base). `instance_nodes` plotted against n is
+    # the whole claim: flat for `anchored`, linear for `resample`.
+    #
+    # It has to run on *both* backends. The original strategy loses to a plain
+    # rebuild on the CPU backend outright -- an update was measured at 2.54 s
+    # against a 1.62 s rebuild on sift1m at n=100k -- and that inversion is
+    # invisible in a GPU-only sweep, where the device absorbs the extra work.
+    ("strategy", ["manifold_mid", "manifold_wide", "fma_mfcc", "20ng_pca500",
+                  "sift1m", "gist1m", "glove100"], dict(batches=8, seeds=3)),
+    ("strategy", ["manifold_mid", "fma_mfcc", "sift1m"],
+     dict(tag="cpu", batches=8, seeds=3, gpu=False)),
+
     # The point of CORE-SG: many MSTs from one graph.
     ("mpts", ["manifold_exact", "fma_mfcc", "20ng_pca500", "sift1m"],
      dict(exact_limit=5000)),
@@ -260,6 +273,7 @@ EXPERIMENT_ROW_NAME = {
     "drift": "drift",
     "batchsize": "batchsize",
     "parity": "parity",
+    "strategy": "strategy",
 }
 
 
@@ -316,7 +330,10 @@ def build_commands(args):
                 cmd += ["--exact-limit", str(extra["exact_limit"])]
             if extra.get("batches"):
                 cmd += ["--batches", str(extra["batches"])]
-            if not args.gpu:
+            # A row may force the CPU backend even on a GPU box: the strategy
+            # A/B has to run on both, because the O(n_base) update only loses
+            # to a rebuild once the device stops absorbing the extra work.
+            if not args.gpu or extra.get("gpu") is False:
                 cmd += ["--gpu", "0"]
             cmds.append((cmd, f"{experiment:<12} {label:<24} k={k}"))
     return cmds

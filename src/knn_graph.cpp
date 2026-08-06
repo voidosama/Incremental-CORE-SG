@@ -142,16 +142,26 @@ void collect_undirected(const KnnGraph& g, std::size_t lo, std::size_t hi, Emit&
             if (q < p) {
                 // Emit only if the reverse edge is absent from q's list,
                 // otherwise q already emitted it.
-                const idx_t* J = g.ids(q);
+                //
+                // The membership test is what makes a naive version of this
+                // Theta(n*k^2) -- and it runs once per batch. Neighbourhoods
+                // are sorted by distance, so `p in N(q)` implies
+                // `d(p,q) <= dists(q)[deg(q)-1]`; the contrapositive rejects
+                // the common non-mutual case with one comparison instead of a
+                // k-long scan. Ties fall through to the scan, so the result is
+                // unchanged.
                 const std::uint32_t cq = g.degree(q);
-                bool mutual = false;
-                for (std::uint32_t t = 0; t < cq; ++t) {
-                    if (J[t] == p) {
-                        mutual = true;
-                        break;
+                if (cq > 0 && !(D[j] > g.dists(q)[cq - 1])) {
+                    const idx_t* J = g.ids(q);
+                    bool mutual = false;
+                    for (std::uint32_t t = 0; t < cq; ++t) {
+                        if (J[t] == p) {
+                            mutual = true;
+                            break;
+                        }
                     }
+                    if (mutual) continue;
                 }
-                if (mutual) continue;
             }
             emit(p, q, D[j]);
         }

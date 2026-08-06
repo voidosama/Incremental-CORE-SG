@@ -146,6 +146,10 @@ struct Options {
     /// First seed value. `stream` needs it to match the driver script's own
     /// numbering so rows from the two sides join on (dataset, seed, batch).
     std::uint64_t seed_base = 0;
+    /// Which insertion strategy the run measures. `incremental` sweeps both
+    /// regardless, so that the O(batch) claim is a measured comparison rather
+    /// than a change of default nobody re-ran the numbers for.
+    InsertStrategy strategy = InsertStrategy::Anchored;
 };
 
 std::vector<std::uint32_t> parse_uint_list(const std::string& s) {
@@ -218,6 +222,7 @@ CoreSGParams base_params(const Options& o, const Data& d, std::uint64_t seed) {
     p.backend.oom_fallback = o.oom_fallback;
     p.incr.instances = 4;
     p.incr.min_base_for_split = 2000;
+    p.incr.strategy = o.strategy;
     p.incr.seed = seed;
     p.incr.instance_nnd.k = o.k;
     p.incr.instance_nnd.sample = 16;
@@ -468,6 +473,98 @@ void exp_incremental(const Options& o, const Data& d, Csv* csv, Arrival arrival)
                 csv->row(name, d.name, cursor, d.dim, o.k, "rebuild_effort", "incremental", seed,
                          -1, "recall_rebuild", knn_recall(sg.knn(), exact, o.k).recall);
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// E1b -- insertion strategy: does an update cost O(batch) or O(n)?
+// ---------------------------------------------------------------------------
+
+/// The two strategies against one rebuild baseline, with the batch size held
+/// fixed so that per-batch cost can be read as a function of n alone.
+///
+/// This exists because the original claim -- "cheaper than rebuilding" -- was
+/// only ever true per batch and only on a GPU. Under Resample the union of the
+/// instances is the whole base, so an update is Theta(n_base) and the margin
+/// shrinks as the stream lengthens; on a CPU backend it inverts outright and a
+/// rebuild wins. The number that settles it is `instance_nodes` against n: a
+/// flat line is the property, a sloped one is the bug.
+void exp_strategy(const Options& o, const Data& d, Csv* csv) {
+    std::printf("\n[strategy] %d seeds, %d batches\n", o.seeds, o.batches);
+    const std::size_t base = static_cast<std::size_t>(o.base_fraction * double(d.n));
+    const std::size_t per_batch = (d.n - base) / std::max(1, o.batches);
+    if (per_batch == 0) {
+        std::printf("  (too few points for %d batches; skipped)\n", o.batches);
+        return;
+    }
+    const bool can_reference = d.n <= 200000;
+
+    for (int s = 0; s < o.seeds; ++s) {
+        const std::uint64_t seed = 1000 + s;
+        const std::vector<idx_t> order = arrival_order(d, Arrival::Shuffled, seed);
+        const std::size_t total = base + std::size_t(o.batches) * per_batch;
+        const std::vector<float> all = gather_rows(d, order, 0, total);
+
+        // One baseline for both arms. Charged at the *final* n, which is the
+        // rebuild a reader would compare the last update against.
+        CoreSGParams rp = base_params(o, d, seed);
+        CoreSG rebuilt(rp);
+        const CoreSGStats rs = rebuilt.build(all.data(), total, d.dim);
+        csv->row("strategy", d.name, total, d.dim, o.k, "strategy", "rebuild", seed, -1,
+                 "rebuild_seconds", rs.total_seconds);
+
+        KnnGraph exact;
+        if (can_reference) {
+            Dataset present(d.dim, d.metric);
+            present.append(all.data(), total);
+            exact = brute_force_graph(present, o.k, rebuilt.pool());
+            csv->row("strategy", d.name, total, d.dim, o.k, "strategy", "rebuild", seed, -1,
+                     "recall", knn_recall(rebuilt.knn(), exact, o.k).recall);
+        }
+
+        for (InsertStrategy strat : {InsertStrategy::Resample, InsertStrategy::Anchored}) {
+            const char* label = to_string(strat);
+            CoreSGParams p = base_params(o, d, seed);
+            p.incr.strategy = strat;
+            CoreSG sg(p);
+            sg.build(all.data(), base, d.dim);
+
+            double updates = 0.0;
+            std::size_t cursor = base;
+            for (int b = 0; b < o.batches && cursor < total; ++b) {
+                const std::size_t count = std::min(per_batch, total - cursor);
+                const CoreSGStats st = sg.insert(all.data() + cursor * d.dim, count);
+                cursor += count;
+                updates += st.total_seconds;
+
+                const long batch = b + 1;
+                csv->row("strategy", d.name, st.n, d.dim, o.k, "strategy", label, seed, batch,
+                         "insert_seconds", st.total_seconds);
+                // The load-bearing column: nodes the instances descended over.
+                // Flat in n is the whole claim.
+                csv->row("strategy", d.name, st.n, d.dim, o.k, "strategy", label, seed, batch,
+                         "instance_nodes", double(st.knn_stats.instance_nodes));
+                csv->row("strategy", d.name, st.n, d.dim, o.k, "strategy", label, seed, batch,
+                         "search_seconds", st.knn_stats.search_seconds);
+                csv->row("strategy", d.name, st.n, d.dim, o.k, "strategy", label, seed, batch,
+                         "context_nodes", double(st.knn_stats.context_nodes));
+                csv->row("strategy", d.name, st.n, d.dim, o.k, "strategy", label, seed, batch,
+                         "refine_nodes", double(st.knn_stats.refine_nodes));
+                // Per-batch speed-up against rebuilding at the final n. Both
+                // arms divide the same number, so the column is comparable.
+                csv->row("strategy", d.name, st.n, d.dim, o.k, "strategy", label, seed, batch,
+                         "rebuild_speedup", rs.total_seconds / st.total_seconds);
+            }
+            csv->row("strategy", d.name, cursor, d.dim, o.k, "strategy", label, seed, -1,
+                     "update_total_seconds", updates);
+            if (can_reference) {
+                csv->row("strategy", d.name, cursor, d.dim, o.k, "strategy", label, seed, -1,
+                         "recall", knn_recall(sg.knn(), exact, o.k).recall);
+            }
+            std::printf("  seed %llu %-9s: %d updates %.3fs (%.3fs each) vs rebuild %.3fs\n",
+                        static_cast<unsigned long long>(seed), label, o.batches, updates,
+                        updates / double(o.batches), rs.total_seconds);
         }
     }
 }
@@ -1620,6 +1717,12 @@ int main(int argc, char** argv) {
         else if (a == "--mst-dir") o.mst_dir = next();
         else if (a == "--export-mpts") o.export_mpts = std::strtoul(next().c_str(), nullptr, 10);
         else if (a == "--seed-base") o.seed_base = std::strtoull(next().c_str(), nullptr, 10);
+        else if (a == "--strategy") {
+            if (!insert_strategy_from_string(next(), &o.strategy)) {
+                std::fprintf(stderr, "unknown --strategy (anchored|resample)\n");
+                return 2;
+            }
+        }
         else if (a == "--no-oom-fallback") o.oom_fallback = false;
         else if (a == "--skip-cpu-scaling") o.skip_cpu_scaling = true;
         else if (a == "--threads") o.threads = std::strtoul(next().c_str(), nullptr, 10);
@@ -1644,6 +1747,7 @@ int main(int argc, char** argv) {
         if (all || e == "scaling") exp_scaling(o, d, &csv);
         if (all || e == "drift") exp_drift(o, d, &csv);
         if (all || e == "sensitivity") exp_sensitivity(o, d, &csv);
+        if (all || e == "strategy") exp_strategy(o, d, &csv);
         if (all || e == "batchsize") exp_batch_size(o, d, &csv);
         if (all || e == "parity") exp_parity(o, d, &csv);
         // `stream` is deliberately NOT in `all`: it only does anything when the

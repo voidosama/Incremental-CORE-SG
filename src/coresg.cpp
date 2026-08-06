@@ -330,8 +330,15 @@ CoreSGStats CoreSG::insert(const float* rows, std::size_t count) {
     // the merge and the restricted refinement updates a reverse degree in
     // O(1) and marks the affected nodes, so the refresh below only has to
     // rescore the dirty region instead of the whole graph.
+    // The hubness index is handed in as the reverse-adjacency source: the
+    // anchored seeding search wants the undirected graph, and the table is
+    // already being maintained exactly for the scoring.
+    // The selected anti-hubs double as search entry points. They carry a
+    // per-component quota, so on a fragmented k-NN graph they reach regions a
+    // uniform draw would miss -- which is exactly the data this project cares
+    // about, since those are the graphs the bridges exist for.
     const auto t_knn = Clock::now();
-    stats.knn_stats = incr_->insert(data_, &knn_, first_new);
+    stats.knn_stats = incr_->insert(data_, &knn_, first_new, &hub_, &hub_.selected());
     stats.knn_seconds = since(t_knn);
 
     // Before hub_.refresh(), which clears the change log this consumes.

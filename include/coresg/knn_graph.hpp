@@ -45,6 +45,24 @@ public:
     virtual void on_edge_removed(idx_t src, idx_t dst) = 0;
 };
 
+/// Read-only view of the reverse adjacency, when something is maintaining it.
+/// Implemented by HubnessIndex, which already keeps reverse lists exact.
+///
+/// It exists so a graph *search* can walk the undirected graph. A directed
+/// k-NN graph has sinks -- a node that appears in nobody's list cannot be left
+/// by following forward edges -- and a greedy walk that reaches one is stuck.
+/// Supplying the back edges costs nothing here because they are already there.
+///
+/// Callers must treat the returned reference as valid only while the graph is
+/// quiescent: the lists are mutated by the observer hooks on every insertion.
+class ReverseNeighbours {
+public:
+    virtual ~ReverseNeighbours() = default;
+    /// False when no reverse table is being kept; `reverse_of` is then empty.
+    virtual bool reverse_available() const = 0;
+    virtual const std::vector<idx_t>& reverse_of(idx_t v) const = 0;
+};
+
 /// One spinlock per node. Kept outside the arrays so that growing the graph
 /// (new points arriving) does not have to preserve lock state.
 class SpinLocks {

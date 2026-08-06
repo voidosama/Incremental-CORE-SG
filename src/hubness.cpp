@@ -58,8 +58,14 @@ void HubnessIndex::build(const KnnGraph& g, ThreadPool* pool) {
     antihub_.assign(n_, 0);
     stamp_.assign(n_, 0);
     epoch_ = 0;
+    for (std::size_t s = 0; s < kShards; ++s) {
+        shards_[s].dirty.clear();
+        shards_[s].nbr_changed.clear();
+        shards_[s].removals.clear();
+    }
     dirty_list_.clear();
     nbr_changed_list_.clear();
+    removals_.clear();
     selected_.clear();
 
     rev_.clear();
@@ -141,16 +147,46 @@ void HubnessIndex::detach(KnnGraph* g) {
 void HubnessIndex::mark_dirty(idx_t v) {
     if (v >= n_) return;
     if (dirty_[v].exchange(1, std::memory_order_relaxed) == 0) {
-        std::lock_guard<std::mutex> lk(list_mu_);
-        dirty_list_.push_back(v);
+        ListShard& sh = shard_for(v);
+        std::lock_guard<std::mutex> lk(sh.mu);
+        sh.dirty.push_back(v);
     }
 }
 
 void HubnessIndex::mark_neighbourhood_changed(idx_t v) {
     if (v >= n_) return;
     if (nbr_changed_[v].exchange(1, std::memory_order_relaxed) == 0) {
-        std::lock_guard<std::mutex> lk(list_mu_);
-        nbr_changed_list_.push_back(v);
+        ListShard& sh = shard_for(v);
+        std::lock_guard<std::mutex> lk(sh.mu);
+        sh.nbr_changed.push_back(v);
+    }
+}
+
+/// Flatten the shards into the contiguous views the public accessors return.
+/// Idempotent: the shards are the authority and are only cleared by a refresh.
+void HubnessIndex::gather_lists() const {
+    std::size_t nd = 0, nc = 0, nr = 0;
+    for (std::size_t s = 0; s < kShards; ++s) {
+        nd += shards_[s].dirty.size();
+        nc += shards_[s].nbr_changed.size();
+        nr += shards_[s].removals.size();
+    }
+    if (dirty_list_.size() == nd && nbr_changed_list_.size() == nc &&
+        removals_.size() == nr) {
+        return;  // already current
+    }
+    dirty_list_.clear();
+    nbr_changed_list_.clear();
+    removals_.clear();
+    dirty_list_.reserve(nd);
+    nbr_changed_list_.reserve(nc);
+    removals_.reserve(nr);
+    for (std::size_t s = 0; s < kShards; ++s) {
+        const ListShard& sh = shards_[s];
+        dirty_list_.insert(dirty_list_.end(), sh.dirty.begin(), sh.dirty.end());
+        nbr_changed_list_.insert(nbr_changed_list_.end(), sh.nbr_changed.begin(),
+                                 sh.nbr_changed.end());
+        removals_.insert(removals_.end(), sh.removals.begin(), sh.removals.end());
     }
 }
 
@@ -175,8 +211,9 @@ void HubnessIndex::on_edge_removed(idx_t src, idx_t dst) {
         // Recorded unfiltered: whether the *undirected* edge died depends on
         // dst's list, which is being mutated concurrently right now. The
         // consumer filters once the batch is quiescent.
-        std::lock_guard<std::mutex> lk(list_mu_);
-        removals_.emplace_back(src, dst);
+        ListShard& sh = shard_for(dst);
+        std::lock_guard<std::mutex> lk(sh.mu);
+        sh.removals.emplace_back(src, dst);
     }
     if (rev_enabled_) {
         rev_locks_.lock(dst);
@@ -275,6 +312,7 @@ double HubnessIndex::antihub_fraction() const {
 }
 
 std::vector<idx_t> HubnessIndex::collect_rescore_set(const KnnGraph& g) {
+    gather_lists();
     ++epoch_;
     if (epoch_ == 0) {  // wrapped
         std::fill(stamp_.begin(), stamp_.end(), 0u);
@@ -441,8 +479,13 @@ HubnessStats HubnessIndex::refresh(const KnnGraph& g, std::uint32_t dim, std::si
     const std::vector<idx_t> nodes = collect_rescore_set(g);
     apply_scores(g, nodes, pool);
 
-    for (idx_t v : dirty_list_) dirty_[v].store(0, std::memory_order_relaxed);
-    for (idx_t v : nbr_changed_list_) nbr_changed_[v].store(0, std::memory_order_relaxed);
+    for (std::size_t s = 0; s < kShards; ++s) {
+        ListShard& sh = shards_[s];
+        for (idx_t v : sh.dirty) dirty_[v].store(0, std::memory_order_relaxed);
+        for (idx_t v : sh.nbr_changed) nbr_changed_[v].store(0, std::memory_order_relaxed);
+        sh.dirty.clear();
+        sh.nbr_changed.clear();
+    }
     dirty_list_.clear();
     nbr_changed_list_.clear();
 
@@ -460,8 +503,13 @@ HubnessStats HubnessIndex::rescore_all(const KnnGraph& g, std::uint32_t dim,
     for (idx_t i = 0; i < n_; ++i) all[i] = i;
     apply_scores(g, all, pool);
 
-    for (idx_t v : dirty_list_) dirty_[v].store(0, std::memory_order_relaxed);
-    for (idx_t v : nbr_changed_list_) nbr_changed_[v].store(0, std::memory_order_relaxed);
+    for (std::size_t s = 0; s < kShards; ++s) {
+        ListShard& sh = shards_[s];
+        for (idx_t v : sh.dirty) dirty_[v].store(0, std::memory_order_relaxed);
+        for (idx_t v : sh.nbr_changed) nbr_changed_[v].store(0, std::memory_order_relaxed);
+        sh.dirty.clear();
+        sh.nbr_changed.clear();
+    }
     dirty_list_.clear();
     nbr_changed_list_.clear();
 

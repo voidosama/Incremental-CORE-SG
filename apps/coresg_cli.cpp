@@ -107,6 +107,18 @@ CoreSGParams params_from(const Args& a) {
     p.backend.cpu_slots = static_cast<unsigned>(a.num("cpu-slots", 1));
 
     p.incr.instances = static_cast<std::uint32_t>(a.num("instances", 4));
+    if (!insert_strategy_from_string(a.str("strategy", "anchored"), &p.incr.strategy)) {
+        std::fprintf(stderr, "unknown --strategy '%s' (anchored|resample)\n",
+                     a.str("strategy").c_str());
+        std::exit(2);
+    }
+    p.incr.search_ef = static_cast<std::uint32_t>(a.num("search-ef", 0));
+    p.incr.search_entries = static_cast<std::uint32_t>(a.num("search-entries", 8));
+    p.incr.search_reverse_cap = static_cast<std::uint32_t>(a.num("search-reverse-cap", 16));
+    p.incr.context_per_new = a.real("context-per-new", 2.0);
+    p.incr.context_max_nodes = static_cast<std::size_t>(a.num("context-max-nodes", 0));
+    p.incr.owned_warm_fraction = a.real("owned-warm-fraction", 0.25);
+    p.incr.refine_per_new = a.real("refine-per-new", 2.0);
     p.incr.sampling = (a.str("sampling", "partition") == "independent")
                           ? InstanceSampling::Independent
                           : InstanceSampling::Partition;
@@ -470,6 +482,9 @@ void usage() {
         "  --gpu 0|1                 --devices 0,1,2,3\n"
         "  --threads T               --cpu-slots S\n"
         "  --instances I             --sampling partition|independent\n"
+        "  --strategy anchored|resample   (anchored = O(batch) updates)\n"
+        "  --search-ef N             --search-entries N   --search-reverse-cap N\n"
+        "  --context-per-new F       --owned-warm-fraction F  --refine-per-new F\n"
         "  --sample S                --iters N        --refine-iters N\n"
         "  --antihub-multiplier M    --reverse-lists 0|1\n"
         "  --connect 0|1             --brute-force-limit N\n"

@@ -135,7 +135,7 @@ struct HubnessStats {
     double seconds = 0.0;
 };
 
-class HubnessIndex : public GraphObserver {
+class HubnessIndex : public GraphObserver, public ReverseNeighbours {
 public:
     HubnessIndex() = default;
     explicit HubnessIndex(const HubnessParams& p) : params_(p) {}
@@ -189,25 +189,44 @@ public:
     const std::vector<idx_t>& reverse_neighbours(idx_t v) const { return rev_[v]; }
     bool has_reverse_lists() const { return rev_enabled_; }
 
-    std::size_t dirty_count() const { return dirty_list_.size(); }
+    // ---- ReverseNeighbours ---------------------------------------------
+    bool reverse_available() const override { return rev_enabled_; }
+    const std::vector<idx_t>& reverse_of(idx_t v) const override {
+        static const std::vector<idx_t> kEmpty;
+        if (!rev_enabled_ || v >= n_) return kEmpty;
+        return rev_[v];
+    }
+
+    std::size_t dirty_count() const {
+        std::size_t c = 0;
+        for (std::size_t s = 0; s < kShards; ++s) c += shards_[s].dirty.size();
+        return c;
+    }
     std::size_t memory_bytes() const;
 
     /// Nodes whose own neighbour list changed since the last refresh. These
     /// are the only nodes that can have contributed a *new* edge, which is
     /// what lets the connectivity tracker union over a batch-sized set
     /// instead of the whole graph.
-    const std::vector<idx_t>& changed_nodes() const { return nbr_changed_list_; }
+    const std::vector<idx_t>& changed_nodes() const {
+        gather_lists();
+        return nbr_changed_list_;
+    }
 
     /// Directed edges evicted since the last refresh, as (src, dst). A pair
     /// here is only a *candidate*: the undirected edge survives if dst still
     /// lists src. Filtering has to happen once the graph is quiescent, so it
     /// is left to the consumer. Only recorded when tracking is enabled.
     const std::vector<std::pair<idx_t, idx_t>>& removal_candidates() const {
+        gather_lists();
         return removals_;
     }
     void set_track_removals(bool on) { track_removals_ = on; }
     bool track_removals() const { return track_removals_; }
-    void clear_removals() { removals_.clear(); }
+    void clear_removals() {
+        for (std::size_t s = 0; s < kShards; ++s) shards_[s].removals.clear();
+        removals_.clear();
+    }
 
     /// Score of a single node, computed from scratch. Exposed for tests.
     double compute_score(const KnnGraph& g, idx_t v) const;
@@ -239,13 +258,33 @@ private:
 
     // Dirty tracking. The flag arrays dedupe (one atomic exchange per node per
     // batch); the lists preserve the set so a refresh never scans all n.
+    //
+    // The lists are sharded by node id. A single mutex here was measured as
+    // the larger half of the observer's cost during a merge: the hooks fire on
+    // every directed edge change (~1.2 M per batch on sift1m at k=32) and,
+    // although the dedupe means only the first touch of a node takes the lock,
+    // that is still hundreds of thousands of acquisitions of one lock by every
+    // worker at once. Sharding removes the contention without changing what is
+    // collected -- order within the set never mattered.
+    struct ListShard {
+        std::mutex mu;
+        std::vector<idx_t> dirty;
+        std::vector<idx_t> nbr_changed;
+        std::vector<std::pair<idx_t, idx_t>> removals;
+    };
+    static constexpr std::size_t kShards = 64;  // power of two; masked, not modulo
     std::unique_ptr<std::atomic<std::uint8_t>[]> dirty_;
     std::unique_ptr<std::atomic<std::uint8_t>[]> nbr_changed_;
-    std::vector<idx_t> dirty_list_;
-    std::vector<idx_t> nbr_changed_list_;
-    std::vector<std::pair<idx_t, idx_t>> removals_;
+    ListShard shards_[kShards];
+    /// Flattened views, rebuilt on demand so the public accessors keep
+    /// returning one contiguous range. The shards remain the authority.
+    mutable std::vector<idx_t> dirty_list_;
+    mutable std::vector<idx_t> nbr_changed_list_;
+    mutable std::vector<std::pair<idx_t, idx_t>> removals_;
     bool track_removals_ = false;
-    std::mutex list_mu_;
+
+    ListShard& shard_for(idx_t v) { return shards_[v & (kShards - 1)]; }
+    void gather_lists() const;
 
     std::vector<std::vector<idx_t>> rev_;
     SpinLocks rev_locks_;
