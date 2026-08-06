@@ -343,7 +343,114 @@ def section_fishdbc(df):
     print(piv.round(4).to_string())
 
 
+def section_strategy(df):
+    """The O(batch) vs O(n_base) A/B.
+
+    Four columns carry the whole argument and they have to be read together:
+    `instance_nodes` flat in n is the property, `insert_seconds` flat is its
+    consequence, `rebuild_speedup` climbing is what a reader cares about, and
+    `largest_instance_bytes` flat is the capacity claim. Any one of them alone
+    is arguable; together they are not.
+    """
+    print("\n" + "=" * 78)
+    print("STRATEGY -- does an update cost O(batch) or O(n_base)?")
+    print("=" * 78)
+    d = df[df.experiment == "strategy"]
+    if d.empty:
+        print("    (no rows yet)")
+        return
+
+    print("\n### per batch, by strategy (mean over seeds)")
+    print("    anchored: instance_nodes and largest_instance_bytes FLAT while n grows,")
+    print("    rebuild_speedup CLIMBING. resample: both grow, speedup does not.")
+    pb = d[d.metric.isin(["insert_seconds", "instance_nodes", "rebuild_speedup",
+                          "largest_instance_bytes", "search_seconds", "refine_nodes"])]
+    if not pb.empty:
+        piv = pb.pivot_table(index=["dataset", "value", "batch"], columns="metric",
+                             values="measurement", aggfunc="mean")
+        piv = piv[piv.index.get_level_values("batch") >= 0]
+        if "largest_instance_bytes" in piv.columns:
+            piv["device_MiB"] = piv.pop("largest_instance_bytes") / 2 ** 20
+        with pd.option_context("display.width", 160, "display.max_rows", 400):
+            print(piv.round(3).to_string())
+
+    # The slope. Growth of the per-batch cost from first to last batch is the
+    # single number that separates the two strategies, because a rebuild's
+    # cost grows by construction and a bounded update's does not.
+    ins = d[(d.metric == "insert_seconds") & (d.batch >= 0)]
+    if not ins.empty:
+        g = ins.groupby(["dataset", "value", "batch"])["measurement"].mean().reset_index()
+        print("\n### per-batch cost growth, first batch -> last")
+        print("    Ratio near 1.00 means the update does not care how big the graph is.")
+        for (ds, val), grp in g.groupby(["dataset", "value"]):
+            grp = grp.sort_values("batch")
+            first, last = grp.measurement.iloc[0], grp.measurement.iloc[-1]
+            print(f"    {ds:<20} {val:<10} {first:.3f}s -> {last:.3f}s"
+                  f"   ({last / first:.2f}x)")
+
+    for metric, fmt in [("recall", "{:.4f}"), ("update_total_seconds", "{:.2f}"),
+                        ("rebuild_seconds", "{:.2f}")]:
+        t = d[(d.metric == metric) & (d.batch == -1)].groupby(
+            ["dataset", "value"])["measurement"].agg(["mean", "std", "count"])
+        show(metric, t if not t.empty else None, fmt)
+
+
+def section_cuml(df):
+    """CORE-SG against NVIDIA cuML HDBSCAN.
+
+    Unlike the FISHDBC section, wall-clock IS the result here: both sides are
+    CUDA on the same card. Two separable claims, reported separately -- cuML
+    has no incremental path (every batch is a full refit) and no multiple-mpts
+    path (every mpts is another full refit).
+    """
+    print("\n" + "=" * 78)
+    print("cuML -- per-batch update vs a full GPU HDBSCAN rebuild")
+    print("=" * 78)
+    cu = df[df.experiment == "stream_cuml"]
+    cs = df[df.experiment == "stream_coresg"]
+    if cu.empty:
+        print("    (no rows yet -- needs scripts/compare_cuml.py on a RAPIDS box)")
+        return
+
+    oom = cu[(cu.metric == "out_of_memory") & (cu.measurement > 0)]
+    if not oom.empty:
+        print("\n### cuML ran out of device memory")
+        print(oom.groupby("dataset")["n"].min().to_string())
+
+    # CORE-SG pays update + extraction; cuML pays a full fit. Same artefact.
+    a = cs[cs.metric.isin(["insert_seconds", "cluster_extract_seconds"])].groupby(
+        ["dataset", "batch"])["measurement"].sum()
+    b = cu[cu.metric == "rebuild_seconds"].groupby(["dataset", "batch"])["measurement"].mean()
+    if not a.empty and not b.empty:
+        j = pd.DataFrame({"coresg_update+extract": a, "cuml_rebuild": b}).dropna()
+        j["speedup"] = j.cuml_rebuild / j["coresg_update+extract"]
+        print("\n### per batch (the slope is the claim, not the intercept)")
+        print(j.round(4).to_string())
+
+    ari = pd.concat([
+        cs[cs.metric == "ari_vs_reference"].assign(method="coresg"),
+        cu[cu.metric == "ari_vs_reference"].assign(method="cuml"),
+    ]) if not cs.empty else cu[cu.metric == "ari_vs_reference"].assign(method="cuml")
+    if not ari.empty:
+        print("\n### ARI against exact HDBSCAN* recomputed per batch")
+        print("    A speed claim with no agreement column is worthless.")
+        print(ari.pivot_table(index=["dataset", "batch"], columns="method",
+                              values="measurement", aggfunc="mean").round(4).to_string())
+
+    sweep = df[df.experiment == "mpts_cuml"]
+    if not sweep.empty:
+        print("\n### many mpts from one graph -- cuML must refit per value")
+        print("    The CORE-SG side is the `mpts` experiment's extract_seconds; those")
+        print("    rows stay valid because extraction depends on the graph, not on how")
+        print("    the graph was built.")
+        print(sweep[sweep.metric.str.startswith("rebuild_seconds")].pivot_table(
+            index=["dataset", "value"], columns="metric",
+            values="measurement", aggfunc="mean").round(4).to_string())
+
+
 SECTIONS = {
+    "strategy": section_strategy,
+    "cuml": section_cuml,
     "bridges": section_bridges,
     "connectivity": section_connectivity,
     "budget": section_budget,
