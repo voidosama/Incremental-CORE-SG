@@ -506,13 +506,31 @@ void exp_strategy(const Options& o, const Data& d, Csv* csv) {
         const std::size_t total = base + std::size_t(o.batches) * per_batch;
         const std::vector<float> all = gather_rows(d, order, 0, total);
 
-        // One baseline for both arms. Charged at the *final* n, which is the
-        // rebuild a reader would compare the last update against.
+        // The baseline is a rebuild *at every batch's own n*, not one rebuild
+        // at the final size. Dividing an update at n=150k by a rebuild at
+        // n=200k flatters the early batches and makes the ratio look like it
+        // decays even when it does not -- the number a reader wants is "if I
+        // had rebuilt instead of updating, right now, what would it have
+        // cost". Batches share the arms, so this runs once per seed.
         CoreSGParams rp = base_params(o, d, seed);
+        std::vector<double> rebuild_at(o.batches, 0.0);
+        for (int b = 0; b < o.batches; ++b) {
+            const std::size_t at = base + std::size_t(b + 1) * per_batch;
+            CoreSG r(rp);
+            const CoreSGStats s2 = r.build(all.data(), at, d.dim);
+            rebuild_at[b] = s2.total_seconds;
+            csv->row("strategy", d.name, at, d.dim, o.k, "strategy", "rebuild", seed, b + 1,
+                     "rebuild_seconds", s2.total_seconds);
+        }
+
         CoreSG rebuilt(rp);
         const CoreSGStats rs = rebuilt.build(all.data(), total, d.dim);
         csv->row("strategy", d.name, total, d.dim, o.k, "strategy", "rebuild", seed, -1,
                  "rebuild_seconds", rs.total_seconds);
+        // What a rebuild needs resident on one device, so the memory claim sits
+        // next to the time claim instead of in a separate experiment.
+        csv->row("strategy", d.name, total, d.dim, o.k, "strategy", "rebuild", seed, -1,
+                 "largest_instance_bytes", double(rs.largest_instance_bytes));
 
         KnnGraph exact;
         if (can_reference) {
@@ -551,10 +569,15 @@ void exp_strategy(const Options& o, const Data& d, Csv* csv) {
                          "context_nodes", double(st.knn_stats.context_nodes));
                 csv->row("strategy", d.name, st.n, d.dim, o.k, "strategy", label, seed, batch,
                          "refine_nodes", double(st.knn_stats.refine_nodes));
-                // Per-batch speed-up against rebuilding at the final n. Both
-                // arms divide the same number, so the column is comparable.
+                // The capacity claim: what one device had to hold for this
+                // update. Under Anchored it is a function of the batch, so it
+                // should be flat while n grows.
                 csv->row("strategy", d.name, st.n, d.dim, o.k, "strategy", label, seed, batch,
-                         "rebuild_speedup", rs.total_seconds / st.total_seconds);
+                         "largest_instance_bytes", double(st.largest_instance_bytes));
+                // Speed-up against rebuilding at *this* n. This is the headline
+                // curve: flat update over linear rebuild means it climbs.
+                csv->row("strategy", d.name, st.n, d.dim, o.k, "strategy", label, seed, batch,
+                         "rebuild_speedup", rebuild_at[b] / st.total_seconds);
             }
             csv->row("strategy", d.name, cursor, d.dim, o.k, "strategy", label, seed, -1,
                      "update_total_seconds", updates);
@@ -1559,6 +1582,45 @@ void exp_sensitivity(const Options& o, const Data& d, Csv* csv) {
             p.incr.instance_nnd.sample = smp;
             p.incr.refine_nnd.sample = smp;
             measure("sample_size", std::to_string(smp), p, seed);
+        }
+
+        // The anchored strategy's own knobs. An anchored update is cheaper than
+        // the resampling one and recalls less, so the first question a reader
+        // asks is whether the difference is a fixed loss or a dial. These four
+        // sweeps answer it, and `search_ef` is the one that matters: it is the
+        // seeding search's beam width, the search is the dominant cost of an
+        // update, and it trades cost against recall monotonically.
+        for (std::uint32_t ef : {16u, 32u, 64u, 128u, 256u}) {
+            CoreSGParams p = base_params(o, d, seed);
+            p.incr.strategy = InsertStrategy::Anchored;
+            p.incr.search_ef = ef;
+            measure("search_ef", std::to_string(ef), p, seed);
+        }
+        // How much base context an instance is given per new point. Sets the
+        // instance size, hence the device footprint, hence the capacity claim.
+        for (double ctx : {0.5, 1.0, 2.0, 4.0, 8.0}) {
+            CoreSGParams p = base_params(o, d, seed);
+            p.incr.strategy = InsertStrategy::Anchored;
+            p.incr.context_per_new = ctx;
+            measure("context_per_new", std::to_string(ctx), p, seed);
+        }
+        // How much of its seed list a new point inherits into the instance.
+        // 1.0 leaves no free slot for a random candidate, so the batch's own
+        // k-NN structure never gets built -- include it so the sweep shows the
+        // failure rather than only the fix.
+        for (double owf : {0.0, 0.25, 0.5, 1.0}) {
+            CoreSGParams p = base_params(o, d, seed);
+            p.incr.strategy = InsertStrategy::Anchored;
+            p.incr.owned_warm_fraction = owf;
+            measure("owned_warm_fraction", std::to_string(owf), p, seed);
+        }
+        // Reverse edges make a directed k-NN graph navigable; 0 is forward
+        // only, which is measurably cheaper and measurably worse.
+        for (std::uint32_t rc : {0u, 8u, 16u, 32u}) {
+            CoreSGParams p = base_params(o, d, seed);
+            p.incr.strategy = InsertStrategy::Anchored;
+            p.incr.search_reverse_cap = rc;
+            measure("search_reverse_cap", std::to_string(rc), p, seed);
         }
         // Refinement cap policy -- the knob that trades update cost against
         // update quality, and the only one measured as binding on every data
