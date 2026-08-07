@@ -150,6 +150,14 @@ struct Options {
     /// regardless, so that the O(batch) claim is a measured comparison rather
     /// than a change of default nobody re-ran the numbers for.
     InsertStrategy strategy = InsertStrategy::Anchored;
+    /// Anchored overrides, 0 = leave the default. These exist because the
+    /// `sensitivity` sweep inserts the whole second half as ONE batch, where
+    /// recall saturates at 0.998 and every knob looks inert -- while the loss
+    /// they control is cumulative and only appears over many batches. Exposing
+    /// them here lets any multi-batch experiment be run at a given setting.
+    std::uint32_t search_ef = 0;
+    double context_per_new = 0.0;
+    double refine_per_new = 0.0;
 };
 
 std::vector<std::uint32_t> parse_uint_list(const std::string& s) {
@@ -223,6 +231,9 @@ CoreSGParams base_params(const Options& o, const Data& d, std::uint64_t seed) {
     p.incr.instances = 4;
     p.incr.min_base_for_split = 2000;
     p.incr.strategy = o.strategy;
+    if (o.search_ef) p.incr.search_ef = o.search_ef;
+    if (o.context_per_new > 0.0) p.incr.context_per_new = o.context_per_new;
+    if (o.refine_per_new > 0.0) p.incr.refine_per_new = o.refine_per_new;
     p.incr.seed = seed;
     p.incr.instance_nnd.k = o.k;
     p.incr.instance_nnd.sample = 16;
@@ -1779,6 +1790,9 @@ int main(int argc, char** argv) {
         else if (a == "--mst-dir") o.mst_dir = next();
         else if (a == "--export-mpts") o.export_mpts = std::strtoul(next().c_str(), nullptr, 10);
         else if (a == "--seed-base") o.seed_base = std::strtoull(next().c_str(), nullptr, 10);
+        else if (a == "--search-ef") o.search_ef = std::stoul(next());
+        else if (a == "--context-per-new") o.context_per_new = std::stod(next());
+        else if (a == "--refine-per-new") o.refine_per_new = std::stod(next());
         else if (a == "--strategy") {
             if (!insert_strategy_from_string(next(), &o.strategy)) {
                 std::fprintf(stderr, "unknown --strategy (anchored|resample)\n");
