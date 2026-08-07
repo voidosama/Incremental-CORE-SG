@@ -16,6 +16,7 @@
 #   bash scripts/rerun_v2.sh              # everything
 #   bash scripts/rerun_v2.sh decisive     # stages 1-2 only, ~2 hours
 #   bash scripts/rerun_v2.sh baselines    # FISHDBC + cuML only
+#   bash scripts/rerun_v2.sh gaps         # the three holes the v2 sweep left
 #
 # Under SLURM, wrap it exactly as CLUSTER.md §5 shows and resubmit on timeout.
 
@@ -161,6 +162,74 @@ if [ "$WHAT" = all ] || [ "$WHAT" = baselines ]; then
         echo "   competitive claim, so do not ship without it:"
         echo "   conda install -c rapidsai -c conda-forge -c nvidia cuml python=3.12 cuda-version=12.*"
     fi
+fi
+
+# ---------------------------------------------------------------------------
+# STAGE 6 -- the three holes the first v2 sweep left
+# ---------------------------------------------------------------------------
+if [ "$WHAT" = gaps ]; then
+    # 6a. Is the recall deficit a fixed loss or a dial?
+    #
+    # The v2 sweep put three data sets below the 0.85 floor -- gist1m 0.770,
+    # glove100 0.749, 20ng_pca500 0.792 -- and the `sensitivity` sweep could not
+    # have caught it: it inserts the whole second half as ONE batch, where recall
+    # saturates at 0.998, and it does not include any of these three. The loss is
+    # cumulative over batches, so it has to be measured on a multi-batch run.
+    #
+    # search_ef drives recall on the *new* points. It is the binding constraint
+    # where recall_new is itself low: gist1m 0.918, glove100 0.809.
+    echo; echo "### STAGE 6a: search_ef on the data sets where the search struggles"
+    for E in 64 128 256 512; do
+        run_exp strategy "gist1m_ef$E"      --data data/gist/gist_base.fvecs \
+            --k 32 --limit 100000 --batches 8 --seeds 2 --search-ef "$E"
+        run_exp strategy "glove100_ef$E"    --data data/glove100.fvecs --metric cosine \
+            --k 32 --limit 200000 --batches 8 --seeds 2 --search-ef "$E"
+        run_exp strategy "20ng_pca500_ef$E" --data data/20newsgroups_pca500.fvecs \
+            --k 24 --batches 8 --seeds 2 --search-ef "$E"
+    done
+
+    # 6b. The other half of the mechanism. recall_new stays flat across batches
+    # while recall_all decays, so points inserted early are going stale: on
+    # sift1m recall_new held at 0.982 while recall_all fell 0.947 -> 0.915.
+    # search_ef cannot fix that -- the refinement rings are what revisit old
+    # points, and refine_per_new is their budget. It is per *new* point, so
+    # raising it keeps the update O(batch).
+    echo; echo "### STAGE 6b: refine_per_new -- does repairing old points recover recall_all?"
+    for RP in 2 4 8 16; do
+        run_exp strategy "sift1m_rp$RP" --data data/sift/sift_base.fvecs \
+            --k 32 --limit 200000 --batches 8 --seeds 2 --refine-per-new "$RP"
+        run_exp strategy "gist1m_rp$RP" --data data/gist/gist_base.fvecs \
+            --k 32 --limit 100000 --batches 8 --seeds 2 --refine-per-new "$RP"
+    done
+
+    # 6c. The cuML comparison has no agreement column: --reference-limit
+    # defaults to 50000 and every batch of the first run was above it, because
+    # the base alone is half the file. A speed claim with no ARI next to it is
+    # the first thing a reviewer will reject. Keep n under the limit so the
+    # exact HDBSCAN* reference actually gets computed, and use one seed --
+    # sklearn's HDBSCAN on 40k points is the slow part, not cuML.
+    echo; echo "### STAGE 6c: cuML ARI agreement at a size the exact reference can reach"
+    if python -c "import cuml" 2>/dev/null; then
+        for f in fma_mfcc manifold_mid; do
+            case $f in
+                fma_mfcc)     D=data/fma_mfcc.fvecs;    K=32;;
+                manifold_mid) D=data/manifold_mid.fvecs; K=24;;
+            esac
+            python scripts/compare_cuml.py --data "$D" --name "${f}_ari" --k "$K" \
+                --limit 40000 --batches 8 --mpts 10 --seeds 1 \
+                --reference-limit 50000 --out "$OUT" \
+                || echo "!! cuML ARI/$f FAILED (continuing)"
+        done
+    else
+        echo "-- cuML not installed, skipping."
+    fi
+
+    # 6d. cuML's device footprint came back as 0.0: the probe watches cupy's
+    # memory pool and cuML allocates through RMM, which it never sees. Sampling
+    # nvidia-smi alongside the run is the reliable way to get the number.
+    echo
+    echo ">>> For cuML's peak device memory, run this in a second shell during 6c:"
+    echo ">>>   nvidia-smi --query-gpu=memory.used --format=csv --loop-ms=200 > cuml_mem.csv"
 fi
 
 echo; echo "=== rerun_v2 finished $(date -Is) ==="
