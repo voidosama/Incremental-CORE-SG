@@ -174,10 +174,16 @@ struct IncrementalKnnParams {
     /// form that stays sublinear. Applied as an absolute cap of
     /// `refine_per_new * |batch|` nodes. 0 falls back to the fraction.
     ///
-    /// 2.0 is the point where this binds ahead of `refine_max_fraction` at the
-    /// batch sizes the batch-size study recommends; leaving it high enough for
-    /// the fraction to win silently restores a Theta(n) term.
-    double refine_per_new = 2.0;
+    /// Measured 2 / 4 / 8 / 16 over eight batches: 4 buys +1.6 points of recall
+    /// on sift1m and +2.3 on gist1m for no measurable time (1.195 s -> 1.200 s
+    /// per update). 8 and 16 buy exactly nothing.
+    ///
+    /// They buy nothing because `refine_max_fraction` is a ceiling too and the
+    /// two combine with a min: at n=200k the fraction allows 50,000 nodes,
+    /// which is what 4 already asks for, so every setting above 4 is measuring
+    /// the fraction rather than this knob. Raise `refine_max_fraction` as well
+    /// before concluding that a larger repair budget does not help.
+    double refine_per_new = 4.0;
 
     std::uint64_t seed = 7;
     bool verbose = false;
