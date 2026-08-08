@@ -275,6 +275,12 @@ def run_stream(args, sink):
                 cmd += ["--limit", str(args.limit)]
             if not args.gpu:
                 cmd += ["--gpu", "0"]
+            if args.devices:
+                # cuML's HDBSCAN* occupies one GPU. Left unconstrained our side
+                # takes every visible device, and the resulting ratio is then
+                # not a per-device figure. Pass --devices 0 for a head-to-head
+                # that needs no footnote.
+                cmd += ["--devices", args.devices]
             print("  " + " ".join(cmd))
             subprocess.run(cmd, check=True)
 
@@ -412,6 +418,10 @@ def main():
     ap.add_argument("--seeds", type=int, default=3)
     ap.add_argument("--seed-base", type=int, default=0)
     ap.add_argument("--gpu", type=int, default=1)
+    ap.add_argument("--devices", default="",
+                    help="comma-separated CUDA ordinals for OUR side. cuML's "
+                         "HDBSCAN* is single-device, so pass 0 for a "
+                         "per-device comparison; empty uses every GPU")
     ap.add_argument("--reference-limit", type=int, default=50000,
                     help="skip the exact HDBSCAN* reference above this n (it is CPU "
                          "and O(n^2)-ish); 0 disables quality scoring entirely")

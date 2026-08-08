@@ -158,6 +158,12 @@ struct Options {
     std::uint32_t search_ef = 0;
     double context_per_new = 0.0;
     double refine_per_new = 0.0;
+    /// CUDA device ordinals to confine the run to. Empty means every visible
+    /// device, which is the right default for a sweep and the wrong one for a
+    /// head-to-head against a single-device baseline: cuML's HDBSCAN* occupies
+    /// one GPU, so a comparison that silently uses four is not a per-device
+    /// figure. `scaling` sets its own device list and ignores this.
+    std::string device_ids;
 };
 
 std::vector<std::uint32_t> parse_uint_list(const std::string& s) {
@@ -227,6 +233,9 @@ CoreSGParams base_params(const Options& o, const Data& d, std::uint64_t seed) {
     p.threads = o.threads;
     p.seed = seed;
     p.backend.prefer_gpu = o.gpu;
+    for (std::uint32_t id : parse_uint_list(o.device_ids)) {
+        p.backend.device_ids.push_back(static_cast<int>(id));
+    }
     p.backend.oom_fallback = o.oom_fallback;
     p.incr.instances = 4;
     p.incr.min_base_for_split = 2000;
@@ -1790,6 +1799,7 @@ int main(int argc, char** argv) {
         else if (a == "--mst-dir") o.mst_dir = next();
         else if (a == "--export-mpts") o.export_mpts = std::strtoul(next().c_str(), nullptr, 10);
         else if (a == "--seed-base") o.seed_base = std::strtoull(next().c_str(), nullptr, 10);
+        else if (a == "--devices") o.device_ids = next();
         else if (a == "--search-ef") o.search_ef = std::stoul(next());
         else if (a == "--context-per-new") o.context_per_new = std::stod(next());
         else if (a == "--refine-per-new") o.refine_per_new = std::stod(next());
