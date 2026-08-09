@@ -57,6 +57,7 @@
 \newcommand{\mpts}{m_{\mathrm{pts}}}
 \newcommand{\mrd}{d_{\mathrm{mreach}}}
 \newcommand{\coredist}{d_{\mathrm{core}}}
+\newcommand{\ef}{\mathit{ef}}
 
 % ---------------------------------------------------------------------------
 % ieeeaccess.cls defines accessblue as a PANTONE *spot* colour through the
@@ -125,19 +126,26 @@ bounded by $\kmax$ from a single graph. It is, however, static and
 single-machine: new data forces a full rebuild, and it does not fit within one
 accelerator at scale. We make the CORE-SG incremental and multi-GPU by treating
 its two constituent graphs separately. The neighbourhood graph is maintained by
-dynamic NN-Descent decomposed into sampled instances, self-contained subproblems
-that bound per-device memory and can be queued onto any accelerator. The
-spanning tree is replaced by an anti-hub bridge estimate:
-the only edges the neighbourhoods cannot supply are those bridging separated
-components, such bridges leave from component borders, and spanning only the
-nodes of lowest locally-normalised reverse degree suffices. That set is sized
-independently of the number of points, so no spanning tree requires repair when
-data arrives. Across 14 data sets and 18{,}485 measurements the estimate
-yields spanning trees at most 0.024\% heavier than exact while producing
-identical flat clusterings, and costs 10.5 to 36 times less. Incremental
-construction exceeds a compute-matched rebuild by up to 7.0 percentage points of
-recall, and on four GPUs an update reaches 3.23 times the single-device
-throughput with per-device memory exactly invariant.
+dynamic NN-Descent decomposed into instances, self-contained subproblems that
+bound per-device memory and can be queued onto any accelerator. Each
+instance is anchored: the arriving points first search the existing graph for
+their own neighbourhoods, and the instance context is drawn from what that
+search returns, so the work an update performs is set by the size of the batch
+rather than by the size of the graph. The spanning tree is replaced by an
+anti-hub bridge estimate: the only edges the neighbourhoods cannot supply are
+those bridging separated components, such bridges leave from component borders,
+and spanning only the nodes of lowest locally-normalised reverse degree
+suffices. That set is sized independently of the number of points, so no
+spanning tree requires repair when data arrives. Across 14 data sets and more
+than 50{,}000 measurements the estimate yields spanning trees at most 0.024\%
+heavier than exact while producing identical flat clusterings, and costs 10.5 to
+36 times less. The nodes an update visits are constant as the graph grows from
+$10^5$ to $10^6$ points, so an update is cheaper than a rebuild on every backend
+tested and the margin widens with scale, from 1.8 to 12.7 times. Against NVIDIA
+cuML's GPU HDBSCAN on the same single device, which has no update path, a batch
+is served 14.0 times faster at $4 \times 10^5$ points while the two clusterings
+remain statistically indistinguishable, and cuML exhausts an 8\,GB device at
+$8 \times 10^6$ points where our per-device footprint is constant.
 \end{abstract}
 
 \begin{keywords}
@@ -184,14 +192,19 @@ treat its two constituent graphs as separate problems, because they fail for
 different reasons and admit different remedies.
 
 \begin{enumerate}
-\item \textbf{An incremental $k$-NN graph built from sampled instances.} Dynamic
-      NN-Descent \cite{dynamic_nndescent}, our chosen strategy, refines a graph
-      in place and is not incremental. We decompose each update into
-      self-contained subproblems, each a random sample of the existing points
-      merged with the whole arriving batch. Each instance is warm-started, bounds
-      device memory to the size of its own sample plus the batch, and can be
-      queued onto any accelerator without cross-device communication
-      (Section~\ref{sec:knn}).
+\item \textbf{An incremental $k$-NN graph built from anchored instances.}
+      Dynamic NN-Descent \cite{dynamic_nndescent}, our chosen strategy, refines a
+      graph in place and is not incremental. We decompose each update into
+      self-contained subproblems, each pairing the whole arriving batch with a
+      bounded sample of the existing points. Which points form that sample is
+      what decides the cost of an update. Drawing them uniformly makes the
+      instances cover the entire graph between them, so an update costs
+      $\Theta(n)$ whatever the batch size. We instead let the arriving points
+      search the existing graph for their own neighbourhoods and take the sample
+      from the closure of what that search returns, which bounds the update by
+      the size of the batch. Each instance is warm-started, bounds device memory
+      to the size of its own sample plus the batch, and can be queued onto any
+      accelerator without cross-device communication (Section~\ref{sec:knn}).
 
 \item \textbf{An anti-hub bridge estimate replacing the MST.} The edges the
       neighbourhoods cannot supply are precisely those bridging density-separated
@@ -318,11 +331,12 @@ borders, which is where the edges we need originate.
 % ===========================================================================
 
 Fig.~\ref{fig:pipeline} shows the pipeline. A batch of arriving points passes
-through three stages. First, the $k$-NN graph is updated by sampled-instance
-descent: each instance pairs its own random sample of the existing points with
-the whole batch, the instances are merged into the global neighbour lists, and a
-final restricted descent runs over the new points together with their
-neighbourhood \emph{rings}, that is, their neighbours (ring 1) and their
+through three stages. First, the $k$-NN graph is updated by anchored-instance
+descent: the arriving points search the existing graph for their own
+neighbourhoods, each instance pairs the whole batch with a share of the context
+that search identified, the instances are merged into the global neighbour
+lists, and a final restricted descent runs over the new points together with
+their neighbourhood \emph{rings}, that is, their neighbours (ring 1) and their
 neighbours' neighbours (ring 2). Second, the hubness index is refreshed over the
 affected region and re-selects the anti-hubs, whose number is
 $\lceil d \ln |E| \rceil$ for ambient dimensionality $d$ and undirected edge
@@ -343,9 +357,10 @@ $O(n\kmax)$ edges.
   ar/.style={-{Latex[length=1.4mm]}, thin}
 ]
 \node[wide, fill=black!5] (batch) {arriving batch $B$};
-\node[box, below=of batch.south west, anchor=north west] (i1) {instance 1\\{\tiny sample 1 $\cup$ $B$}};
-\node[box, right=2mm of i1] (i2) {instance 2\\{\tiny sample 2 $\cup$ $B$}};
-\node[box, right=2mm of i2] (i3) {instance $m$\\{\tiny sample $m$ $\cup$ $B$}};
+\node[wide, below=of batch] (seed) {seed: each point of $B$ searches the graph\\{\tiny context $C$ $=$ closure of what the search returned}};
+\node[box, below=of seed.south west, anchor=north west] (i1) {instance 1\\{\tiny $C_1 \cup B$}};
+\node[box, right=2mm of i1] (i2) {instance 2\\{\tiny $C_2 \cup B$}};
+\node[box, right=2mm of i2] (i3) {instance $m$\\{\tiny $C_m \cup B$}};
 \node[wide, below=of i2] (merge) {merge into global top-$k$ lists};
 \node[wide, below=of merge] (refine) {restricted NN-Descent (new points $+$ rings)};
 \node[wide, below=of refine, fill=black!5] (knn) {$\kmax$-NN graph};
@@ -354,9 +369,10 @@ $O(n\kmax)$ edges.
 \node[wide, below=of br, fill=black!5] (sg) {CORE-SG $=$ $k$-NNG $\cup$ bridges};
 \node[wide, below=of sg] (out) {$\mathrm{MST}_{\mpts}$ for any $\mpts \le \kmax$\\{\tiny reweight with $\mrd^{\mpts}$, then extract the MST}};
 
-\draw[ar] (batch.south) -- ++(0,-1.2mm) -| (i1.north);
-\draw[ar] (batch.south) -- ++(0,-1.2mm) -| (i2.north);
-\draw[ar] (batch.south) -- ++(0,-1.2mm) -| (i3.north);
+\draw[ar] (batch) -- (seed);
+\draw[ar] (seed.south) -- ++(0,-1.2mm) -| (i1.north);
+\draw[ar] (seed.south) -- ++(0,-1.2mm) -| (i2.north);
+\draw[ar] (seed.south) -- ++(0,-1.2mm) -| (i3.north);
 \draw[ar] (i1.south) |- ([yshift=1.2mm]merge.north);
 \draw[ar] (i2.south) -- (merge.north);
 \draw[ar] (i3.south) |- ([yshift=1.2mm]merge.north);
@@ -368,26 +384,76 @@ $O(n\kmax)$ edges.
 \draw[ar] (knn.east) -- ++(3mm,0) |- (sg.east);
 \draw[ar] (sg) -- (out);
 \end{tikzpicture}
-\caption{The update pipeline. Instances are independent subproblems and are the
-unit of parallelism; only the merge and the bridge spanning tree are global, and
-both operate on objects far smaller than the data set.}
+\caption{The update pipeline. The seeding search is the only step that consults
+the whole graph, and it reads without writing. Instances are independent
+subproblems and are the unit of parallelism; only the merge and the bridge
+spanning tree are global, and both operate on objects far smaller than the data
+set.}
 \label{fig:pipeline}
 \end{figure}
 
-\subsection{The $k$-NN Graph: Sampled Instances}
+\subsection{The $k$-NN Graph: Anchored Instances}
 \label{sec:knn}
 
-An \emph{instance} is a random sample of the existing base points unioned with
-the entire arriving batch, together with the edges those sampled points already
-possess. Each instance is a self-contained NN-Descent problem with no reference
-to global state, which yields three consequences.
+An \emph{instance} is a sample of the existing base points, which we call the
+instance \emph{context}, unioned with the entire arriving batch, together with
+the edges those context points already possess. Each instance is a
+self-contained NN-Descent problem with no reference to global state, which
+yields three consequences.
 
-Sampled base points arrive with real neighbourhoods, so an instance converges in
-fewer rounds than a cold build. It bounds device memory to the size of its own
-sample plus the batch rather than the whole data set, which admits data sets
-larger than one accelerator. And instances never communicate, so they queue onto
-whatever device is free; \emph{the instance count, not the device count, is the
-unit of parallelism}, verified in Section~\ref{sec:scaling}.
+Context points arrive with real neighbourhoods, so an instance converges in
+fewer rounds than a cold build. An instance bounds device memory to the size of
+its own context plus the batch rather than the whole data set, which admits data
+sets larger than one accelerator. And instances never communicate, so they queue
+onto whatever device is free; \emph{the instance count, not the device count, is
+the unit of parallelism}, verified in Section~\ref{sec:scaling}.
+
+\subsubsection{Where the Context Comes From}
+
+The natural choice is to draw the context uniformly at random from the existing
+points, and it is the wrong one. With $m$ instances, the cheapest way to cover
+the graph is to cut one random permutation into $m$ disjoint blocks, at which
+point the union of the contexts is \emph{every} existing point and an update
+performs $\Theta(n)$ work however few points arrived. Sampling each context
+independently at the matching rate lands in the same place. A uniform context is
+also a poor use of the work it costs: only a $1/m$ share of a context point's
+neighbours falls in the same instance, so most of the warm start is discarded
+and the descent spends its rounds recovering edges the global graph already
+held.
+
+We therefore anchor the context on the batch. An update proceeds in two phases.
+
+\emph{Seeding.} Every arriving point searches the existing graph for its own
+approximate neighbourhood by greedy beam search, keeping the $\ef$ best
+candidates found, where $\ef$ is the beam width. The walk follows both the
+stored neighbour lists and the reverse edges the hubness index of
+Section~\ref{sec:bridges} already maintains, since a directed $k$-NN graph
+contains nodes that no list points to and a walk following forward edges alone
+cannot leave them. Entry points are taken as the nearest members of a bounded
+sample of the current anti-hub set, which carries a per-component quota and
+therefore reaches components a uniformly drawn entry point would almost never
+find. This phase reads the graph and writes nothing, both because the reverse
+lists it navigates are modified by every insertion and so that the result does
+not depend on the order the arriving points happen to be processed in. It is the
+only step that consults the whole graph, and it costs $O(\ef k d)$ per arriving
+point rather than $O(n)$.
+
+\emph{Anchoring.} The context is then the closure of what the seeding returned,
+that is, the discovered neighbours followed by their own neighbours, truncated
+at a budget expressed as a multiple of the batch size. The context is a coherent
+local region rather than a scatter, so a context point retains most of its real
+neighbours inside the instance and the warm start is not wasted.
+
+Two details of the construction are load-bearing rather than tuning. Every
+instance carries the \emph{whole} batch, not a share of it: the batch is itself
+a $k$-NN problem, and an instance holding a $1/m$ share of it can discover only
+a $1/m$ share of the edges internal to the batch. And an arriving point
+inherits only a prefix of its seed list into the instance, leaving the remaining
+slots free. A neighbour list that is already full admits no random candidate, so
+without free slots the descent never compares the arriving points with one
+another and the structure internal to the batch is never built at all.
+
+\subsubsection{Merge and Refinement}
 
 After the instances complete, their neighbourhoods are merged into the global
 graph by repeated insertion into sorted top-$k$ lists. This operation is
@@ -399,8 +465,17 @@ the new points and their neighbourhood rings repairs edges the sampling missed.
 
 The refinement set is built as new points, then ring 1, then ring 2, and is
 capped: unbounded it reaches $\Theta(k^2)$ nodes per new point. The cap
-truncates the outermost ring first and never discards a new point. We
+truncates the outermost ring first and never discards a new point. Its budget is
+expressed per arriving point, which is the form that keeps it tied to the batch;
+a cap expressed as a fraction of $n$ grows with the graph whatever its constant
+and would reintroduce the $\Theta(n)$ term the anchoring removes. We
 characterise its effect in Section~\ref{sec:sensitivity}.
+
+Taken together, the nodes an instance visits are a function of $\ef$, $k$ and
+the batch size alone. Section~\ref{sec:incremental} verifies that this holds in
+practice, and that it is what makes an update cheaper than a rebuild rather than
+merely cheaper than a rebuild on data small enough for the difference not to
+matter.
 
 \subsection{The MST: Anti-Hub Bridges}
 \label{sec:bridges}
@@ -448,10 +523,13 @@ $m \ll n$, and \textbf{no spanning tree requires repair when points arrive}.
 Two properties of the implementation are worth stating. The hubness index
 attaches to the $k$-NN graph as an observer, so every inserted or evicted
 directed edge updates a reverse degree in $O(1)$ and marks the affected nodes; a
-refresh rescores only the affected region rather than all $n$ nodes. And
-although \eqref{eq:score} is defined over reverse neighbourhoods, the running
-structure stores only a reverse \emph{degree} per node, an integer, never the
-reverse-neighbour lists themselves.
+refresh rescores only the affected region rather than all $n$ nodes. And the
+index maintains the reverse neighbourhoods themselves, not only the reverse
+degrees, which makes the score propagation after an update exact and is reused
+by the seeding search of Section~\ref{sec:knn} as the reverse adjacency that
+makes the graph navigable. The cost of that choice is one integer per directed
+edge; it may be disabled, at which point the propagation falls back to an
+approximation over forward edges and the search follows forward edges only.
 
 \subsubsection{Component Coverage}
 
@@ -577,18 +655,28 @@ capacity   & \texttt{capacity10m}   & 10{,}000{,}000 & 32 & 64 & n/a \\
 \subsection{Baselines}
 
 The primary baseline is \textbf{full recompute}: rebuilding from scratch at each
-batch. Because the incremental path revisits sampled base points once per batch,
-a plain rebuild is a cheaper baseline, so we also sweep the rebuild's descent
-effort and report the resulting cost/quality frontier
-(Section~\ref{sec:incremental}).
+batch, which is what a static construction obliges. An update is charged against
+a rebuild \emph{at the same $n$}, so that the question the ratio answers is the
+operational one: given the points present now, is updating cheaper than
+rebuilding. Charging every update against a single rebuild at the final size
+would flatter the early batches.
 
-A comparison is informative only when both methods solve the same problem at the
-same granularity. We required a baseline to (i) maintain a density-based
-clustering structure under \emph{insertion}, and (ii) operate on individual
-points rather than on summaries. FISHDBC \cite{fishdbc} is the only published
-method we are aware of that satisfies both, and it is additionally the opposite
-design decision on the same problem, since it maintains a spanning tree while we
-avoid maintaining one, which makes the comparison informative.
+Our second baseline is \textbf{NVIDIA cuML} \cite{cuml}, whose GPU HDBSCAN* is
+the state of the art for density-based clustering on accelerators and has no
+update path, so a rebuild is the only thing it can do. Unlike the comparison
+below, wall-clock is meaningful here: both implementations are CUDA and run on
+the same device, so the measurement is of the methods rather than of the
+languages. cuML also serves one $\mpts$ per fit, so the multiple-$\mpts$
+property of the CORE-SG has no equivalent there and is reported separately.
+
+A comparison against an \emph{incremental} method is informative only when both
+methods solve the same problem at the same granularity. We required such a
+baseline to (i) maintain a density-based clustering structure under
+\emph{insertion}, and (ii) operate on individual points rather than on
+summaries. FISHDBC \cite{fishdbc} is the only published method we are aware of
+that satisfies both, and it is additionally the opposite design decision on the
+same problem, since it maintains a spanning tree while we avoid maintaining one,
+which makes the comparison informative.
 
 The candidates we considered and excluded fail one of the two criteria.
 I-HASTREAM \cite{ihastream} maintains a hierarchy over micro-clusters, and Data
@@ -608,6 +696,10 @@ The sparseness of this list is itself a finding about the problem setting. No
 published method maintains a structure serving a \emph{range} of $\mpts$ under
 insertion, which is why full recompute carries the primary comparison.
 
+We also report the \emph{uniform} context of Section~\ref{sec:knn} as an
+internal baseline throughout, since it is the design the anchored one replaces
+and the difference between them is the contribution being measured.
+
 \subsection{Hardware}
 
 Measurements were taken on a cluster of 4$\times$RTX 2080 SUPER (sm\_75, 8\,GB,
@@ -623,12 +715,21 @@ absolute wall-clock figures are not, and are never pooled across machines.
 
 \subsection{Provenance}
 \label{sec:provenance}
-All figures below derive from 18{,}485 cluster measurements and 8{,}434
-single-GPU measurements, over up to 5 seeds, with zero failed runs. Every
-experiment uses multiple seeds because NN-Descent is randomised and its reverse
-cache is deliberately race-tolerant. Experiments holding the $k$-NN graph exact
-are deterministic and use 2 seeds, which we verified by observing a standard
-deviation of exactly zero across 5.
+All figures below derive from 35{,}446 cluster measurements of the method as
+described here, together with 18{,}485 earlier cluster measurements that remain
+in force, over up to 5 seeds, with zero failed runs. The two sets are disjoint
+in what they establish and are never pooled. The earlier set carries the results
+that depend only on how a graph is \emph{built}, namely the bridge quality of
+Section~\ref{sec:bridgeresults}, the connectivity survey of
+Section~\ref{sec:connectivity}, the dimensionality term of
+Section~\ref{sec:sensitivity} and the multiple-$\mpts$ payoff; none of these
+touches the update path, so re-measuring them would change nothing. Every result
+that involves an insertion comes from the later set.
+
+Every experiment uses multiple seeds because NN-Descent is randomised and its
+reverse cache is deliberately race-tolerant. Experiments holding the $k$-NN
+graph exact are deterministic and use 2 seeds, which we verified by observing a
+standard deviation of exactly zero across 5.
 
 \subsection{Anti-Hub Bridges Match the Exact Spanning Tree}
 \label{sec:bridgeresults}
@@ -747,89 +848,167 @@ neighbour removes an edge while a substituted one stays local. The effect does
 reverse once $\kmax$ approaches the component size (\texttt{manifold\_c32} at
 $\kmax=64$: 30 approximate against 32 exact), so we state the claim narrowly.
 
-\subsection{Incremental Construction Beats a Compute-Matched Rebuild}
+\subsection{An Update Costs What the Batch Costs}
 \label{sec:incremental}
 
-Building on half the data and inserting the rest in eight batches, the
-incremental graph has higher $k$-NN recall than a rebuild on the same final data
-for all eight data sets tested. The incremental path revisits sampled base
-points once per batch, so after eight batches the base has been refined eight
-times, whereas a full rebuild performs a single construction from scratch.
+The property the anchoring exists to produce is that an update does not depend
+on how large the graph already is. Table~\ref{tab:strategy} measures it
+directly. The batch size is held fixed at 12{,}500 points while $n$ varies by a
+factor of ten, and the quantity to read first is not a time but a count: the
+number of nodes the instances of one update descend over.
 
-Fig.~\ref{fig:frontier} therefore sweeps the effort given to that rebuild and
-places the incremental result against the resulting frontier. \emph{Tuning} here
-means raising two NN-Descent parameters of the rebuild: the number of descent
-rounds, and the width of the candidate list examined per round. Each open marker
-is one \textbf{alternative} rebuild configuration, an independent run of its
-own; the markers are not cumulative and are not summed.
-
-\begin{figure}[!t]
+\begin{table}[!t]
+\caption{Anchored against uniform context on \texttt{sift1m}, batch fixed at
+12{,}500 points, 3 seeds, cluster hardware. ``nodes'' is the number of nodes the
+instances of one update descend over, at the first and at the last batch.
+``speed-up'' is one update against one rebuild \emph{at the same $n$}, measured
+at the last batch.}
+\label{tab:strategy}
 \centering
-\begin{tikzpicture}
-\begin{axis}[
-  width=\columnwidth, height=5.2cm,
-  xlabel={build time (s), lower is better},
-  ylabel={$k$-NN recall},
-  grid=both, grid style={black!12},
-  legend style={font=\tiny, at={(0.98,0.03)}, anchor=south east},
-  label style={font=\footnotesize}, tick label style={font=\footnotesize},
-  xmin=1.8, xmax=13
-]
-\addplot[only marks, mark=o, black] coordinates {(4.77,0.88852)(3.55,0.90452)(3.45,0.90457)(4.09,0.93871)(4.20,0.94190)};
-\addlegendentry{\texttt{gist1m}, alternative rebuilds}
-\addplot[only marks, mark=*, black, mark size=2.4pt] coordinates {(11.90,0.97723)};
-\addlegendentry{\texttt{gist1m}, incremental}
-\addplot[only marks, mark=square, black!55] coordinates {(2.46,0.77413)(2.66,0.79043)(2.65,0.79032)(2.89,0.82866)(3.04,0.83441)};
-\addlegendentry{\texttt{glove100}, alternative rebuilds}
-\addplot[only marks, mark=square*, black!55, mark size=2.4pt] coordinates {(9.57,0.90451)};
-\addlegendentry{\texttt{glove100}, incremental}
-\draw[->, gray, thin] (axis cs:4.20,0.94190) -- (axis cs:11.5,0.97723);
-\draw[->, gray, thin] (axis cs:3.04,0.83441) -- (axis cs:9.2,0.90451);
-\node[font=\tiny, gray, anchor=south] at (axis cs:8.0,0.955) {$+3.5$ pts};
-\node[font=\tiny, gray, anchor=south] at (axis cs:6.2,0.868) {$+7.0$ pts};
-\end{axis}
-\end{tikzpicture}
-\caption{Quality against cost. Each open marker is one \emph{alternative}
-rebuild configuration, run independently; they are not cumulative. Filled
-markers are the incremental result. A single rebuild is cheaper in wall clock
-than the incremental path, and remains lower in recall than it even when tuned:
-margins of 3.5 and 7.0 percentage points survive against the best rebuild found.
-Single RTX 4070 Ti SUPER; recall is hardware-independent.}
-\label{fig:frontier}
-\end{figure}
+\footnotesize
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{uniform} & \multicolumn{2}{c}{anchored} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+$n$ & nodes & speed-up & nodes & speed-up \\
+\midrule
+100\,k & 102--141\,k  & 2.99$\times$ & 75.9\,k & 1.82$\times$ \\
+200\,k & 154--245\,k  & 3.76$\times$ & 75.9\,k & 3.11$\times$ \\
+400\,k & 257--452\,k  & 4.98$\times$ & 75.9\,k & \textbf{6.09}$\times$ \\
+1\,M   & 569--1074\,k & 6.22$\times$ & 75.9\,k & \textbf{12.67}$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-We conclude that:
+Under a uniform context the node count grows with $n$ and reaches 1.07\,M at
+$n = 10^6$, which is the whole graph. Under the anchored context it is 75{,}933
+at every size measured, unchanged to the node. Per-device memory follows the
+same pattern, constant at 17.1\,MiB against 22.9 to 241.8\,MiB.
 
-\emph{Extra descent rounds do not substitute for a wider candidate list.} On
-\texttt{gist1m}, doubling and then quadrupling the number of rounds \emph{of the
-rebuild} returns bit-identical distance-evaluation counts, 222.5\,M in both
-cases, because the early-stopping criterion fires at the same round either way.
-A rebuild has reached a fixed point of the local join, so it is not short of
-time and cannot be improved by being given more of it. Widening the candidate
-list does help, raising recall from 0.88852 to 0.93871, since it changes which
-pairs are compared. This matters for the comparison because it establishes that
-the rebuild baseline was not simply under-resourced: it was given both kinds of
-extra effort, and the better of the two was used.
+That difference is what the speed-up column reflects. An anchored update holds
+near-constant cost while the rebuild it is charged against grows with $n$, so
+the ratio grows with scale: a factor of ten in $n$ buys a factor of seven in
+speed-up. A uniform update grows alongside the rebuild, and its ratio moves far
+less.
 
-\emph{A margin survives that tuning.} The best rebuild we found reaches 0.94190
-on \texttt{gist1m} and 0.83441 on \texttt{glove100}, against 0.97723 and 0.90451
-for the incremental graph, margins of 3.5 and 7.0 percentage points of $k$-NN
-recall. Thus, incremental construction produces a better graph than a
-compute-matched rebuild on data where a single construction pass struggles, and
-the margin grows with the difficulty of the $k$-NN problem: $+0.09$ points on
-\texttt{manifold\_mid}, $+3.5$ on \texttt{gist1m}, $+7.0$ on \texttt{glove100}.
+\textbf{The two strategies cross over.} Below roughly $n = 3 \times 10^5$ the
+uniform context is the faster of the two, because the seeding search runs on the
+host while the descent it replaces runs on the devices, which absorb $\Theta(n)$
+descent cheaply until $n$ is large. Above that point the anchored context wins
+and the margin widens quickly. We report the crossover rather than selecting the
+operating points that avoid it.
 
-These two observations together say that the advantage is real but is a quality
-advantage, not a wall-clock one: a single rebuild is cheaper than the
-incremental path in isolation. Cost-competitiveness comes from two other
-directions, namely realistic batch sizes (Section~\ref{sec:batchsize}) and
-multi-device execution (Section~\ref{sec:scaling}).
+No such crossover exists on the CPU backend, where no device absorbs the extra
+work, and there the separation is present from the first batch. An anchored
+update is 1.86 to 2.04 times cheaper than a rebuild at the first batch and 3.14
+to 3.41 times cheaper at the eighth, so its advantage compounds as the stream
+runs. A uniform update stays between 1.27 and 1.67 times throughout, barely
+moving, because it grows at the same rate as the rebuild it is compared with.
+The advantage of the anchored context is therefore not a property of the
+accelerator; it is present wherever the update is not being subsidised by
+hardware fast enough to hide $\Theta(n)$ work.
+
+\subsubsection{What the Cost Buys, and What It Costs}
+\label{sec:incrementalquality}
+
+An anchored update no longer re-descends the existing graph, and that has a
+quality consequence which must be stated plainly. Table~\ref{tab:quality}
+reports $k$-NN recall after eight batches against a rebuild on the same final
+data.
+
+\begin{table}[!t]
+\caption{After eight batches, against a rebuild on the same final data.
+``ARI'' and ``weight'' compare the flat clustering and the spanning-tree weight
+of the incremental result against that rebuild. 3 seeds, cluster hardware.}
+\label{tab:quality}
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+data set & recall & rebuild & ARI & weight \\
+\midrule
+\texttt{manifold\_mid}  & 0.9662 & 0.9960 & 0.9951 & 0.9504 \\
+\texttt{manifold\_wide} & 0.9378 & 0.9892 & 0.9890 & 0.8915 \\
+\texttt{fma\_mfcc}      & 0.9191 & 0.9913 & 0.9876 & 1.0030 \\
+\texttt{fma\_chroma}    & 0.9028 & 0.9802 & 0.9924 & 1.0072 \\
+\texttt{sift1m}         & 0.9155 & 0.9817 & 0.9921 & 1.0018 \\
+\texttt{20ng\_pca500}   & 0.7917 & 0.8247 & 0.9270 & 1.0013 \\
+\texttt{gist1m}         & 0.7704 & 0.8885 & 0.9783 & 1.0040 \\
+\texttt{glove100}       & 0.7490 & 0.7743 & 0.9684 & 1.0018 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Recall is 3 to 12 percentage points below a rebuild. The clustering is not:
+DBSCAN* ARI against the rebuild is 0.927 to 0.995, and the spanning-tree weight
+ratio is within 0.7\% on every real data set. The two observations are
+consistent, because the recall that is lost sits in the tail of the
+neighbourhood while the extracted tree is determined by the core distances at
+$\mpts \ll \kmax$ and by the shortest edges, which survive. The tree is the
+object the method exists to produce, and it is preserved.
+
+The mechanism behind the recall figure is visible per batch. Recall over the
+\emph{arriving} points is flat across the stream, falling only from 0.987 to
+0.982 on \texttt{sift1m} between the second and the eighth batch, while recall
+over all points declines from 0.947 to 0.915. Points inserted early are not
+found by the searches that later batches run, so their neighbour lists go stale.
+Over a 25-batch stream that decline settles rather than continuing:
+\texttt{sift1m} reaches 0.920 by batch 10 and stands at 0.931 at batch 25.
+
+\textbf{The deficit is a dial, not a fixed loss.} The beam width $\ef$ of the
+seeding search trades update cost against recall monotonically
+(Table~\ref{tab:ef}), and on the two data sets where a rebuild is itself weak
+the anchored update overtakes it while remaining the cheaper of the two.
+
+\begin{table}[!t]
+\caption{Beam width against recall and cost, eight batches, 2 seeds.
+``speed-up'' is one update against one rebuild at the same $n$. The rebuild's
+own recall is 0.774, 0.824 and 0.889 respectively.}
+\label{tab:ef}
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+data set & $\ef=64$ & $\ef=128$ & $\ef=256$ & $\ef=512$ \\
+\midrule
+\texttt{glove100} recall     & 0.749 & \textbf{0.791} & 0.835 & 0.877 \\
+\quad speed-up               & 2.99$\times$ & 2.19$\times$ & 1.42$\times$ & 0.85$\times$ \\
+\texttt{20ng\_pca500} recall & 0.805 & \textbf{0.841} & 0.875 & 0.905 \\
+\quad speed-up               & 1.44$\times$ & 1.22$\times$ & 1.03$\times$ & 0.83$\times$ \\
+\texttt{gist1m} recall       & 0.770 & 0.791 & 0.810 & 0.827 \\
+\quad speed-up               & 2.80$\times$ & 1.93$\times$ & 1.47$\times$ & 0.95$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At $\ef = 128$ the anchored update exceeds the rebuild's recall on
+\texttt{glove100}, 0.791 against 0.774, while still costing 2.19 times less, and
+on \texttt{20ng\_pca500}, 0.841 against 0.824 at 1.22 times less. An absolute
+recall target is the wrong reading of these two data sets, since no method we
+ran reaches 0.85 on them at the operating $\kmax$; the rebuild is the reference.
+
+\texttt{gist1m} is the case where the dial does not reach far enough. At
+$d = 960$ the search does not attain the rebuild's 0.889 at any beam width
+within the cost budget, and by $\ef = 512$ an update is no longer cheaper than
+rebuilding. Very high ambient dimensionality is where a greedy walk over a
+$k$-NN graph runs out of room, and we state the scope of the cost claim
+accordingly.
+
+The repair budget is a second dial and is nearly free. Raising the refinement
+allowance from two to four nodes per arriving point moves \texttt{sift1m} from
+0.9155 to 0.9317 and \texttt{gist1m} from 0.7704 to 0.7935, for a change in
+update time from 1.195 to 1.200 seconds. Beyond four nodes it produced no
+further change, because a second ceiling expressed as a fraction of $n$ becomes
+the binding one at these sizes, so whether a genuinely larger repair budget
+helps is a question left open.
 
 \subsection{Amortisation and Batch Size}
 \label{sec:batchsize}
 
 Fig.~\ref{fig:batch} sweeps the batch size, expressed as a fraction of the final
-data set size $n$, against the cost of inserting one point.
+data set size $n$, against the cost of inserting one point. A batch of 0.1\% is
+one containing $0.001n$ points, so smaller batches mean more frequent, smaller
+updates.
 
 \begin{figure}[!t]
 \centering
@@ -843,45 +1022,73 @@ data set size $n$, against the cost of inserting one point.
   label style={font=\footnotesize}, tick label style={font=\footnotesize},
   every axis plot/.append style={thick, mark size=1.3pt}
 ]
-\addplot[mark=*, black] coordinates {(0.001,0.003900)(0.005,0.000935)(0.010,0.000527)(0.050,0.000132)(0.100,0.000071)(0.250,0.000037)};
+\addplot[mark=*, black] coordinates {(0.001,0.002235)(0.005,0.000698)(0.010,0.000303)(0.050,0.000111)(0.100,0.000087)(0.250,0.000064)};
 \addlegendentry{\texttt{fma\_mfcc}}
-\addplot[mark=square*, black!60, dashed] coordinates {(0.001,0.003719)(0.005,0.000905)(0.010,0.000504)(0.050,0.000128)(0.100,0.000072)(0.250,0.000035)};
+\addplot[mark=square*, black!60, dashed] coordinates {(0.001,0.002161)(0.005,0.000708)(0.010,0.000299)(0.050,0.000111)(0.100,0.000086)(0.250,0.000059)};
 \addlegendentry{\texttt{sift1m}}
-\addplot[mark=triangle*, black!40] coordinates {(0.001,0.003441)(0.005,0.000879)(0.010,0.000506)(0.050,0.000127)(0.100,0.000071)(0.250,0.000037)};
+\addplot[mark=triangle*, black!40] coordinates {(0.001,0.001534)(0.005,0.000515)(0.010,0.000228)(0.050,0.000091)(0.100,0.000066)(0.250,0.000045)};
 \addlegendentry{\texttt{manifold\_mid}}
 \end{axis}
 \end{tikzpicture}
 \caption{Per-point update cost against batch size, $n = 50{,}000$, 3 seeds,
 cluster hardware. For the three sets plotted, the fixed per-update phases,
 namely the hubness refresh, bridge spanning tree and connectivity pass, rise
-from 8.6 to 8.9\% of update time at a 25\% batch to 24.6 to 26.2\% at a 0.1\%
+from 6.6 to 8.5\% of update time at a 25\% batch to 38.1 to 49.9\% at a 0.1\%
 batch.}
 \label{fig:batch}
 \end{figure}
 
-A batch of 0.1\% is one containing $0.001n$ points, so smaller batches mean more
-frequent, smaller updates. \textbf{At a 25\% batch an incremental update costs
-0.97 to 1.24 times a full rebuild and produces a better graph on all four data
-sets tested}, by 0.4 to 5.9 percentage points of recall. At that batch size the
-method is therefore free relative to the rebuild it replaces.
+Two costs move in opposite directions here, and separating them is what makes
+the figure readable.
 
-Smaller batches cost more per point: inserting at 0.1\% costs roughly 100 times
-more per point than at 25\%, because the fixed phases of an update run once per
-insertion regardless of how many points arrived. The recall gained in return is
-at most 0.25 percentage points. The practical reading is that batches should be
-as large as the application's latency budget allows, and that at 10 to 25\% of
-the graph an update is effectively free.
+\textbf{Per point, larger batches are cheaper.} Inserting at 0.1\% costs 34 to
+35 times more per point than at 25\%, because the fixed phases of an update run
+once per insertion regardless of how many points arrived. Their share of an
+update rises from 6.6 to 8.5\% at a 25\% batch to 38.1 to 49.9\% at 0.1\%. This
+is amortisation, and it is unchanged in kind by the anchoring.
 
+\textbf{Per update against a rebuild, smaller batches win by more.} An anchored
+update costs what its batch costs, so halving the batch roughly halves the
+update while the rebuild it is compared against does not move at all.
+Table~\ref{tab:batchratio} gives the ratio.
+
+\begin{table}[!t]
+\caption{One update against one rebuild on the same data, $n = 50{,}000$,
+3 seeds, cluster hardware. Higher is better for the incremental method.}
+\label{tab:batchratio}
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+data set & 0.1\% & 1\% & 10\% & 25\% \\
+\midrule
+\texttt{manifold\_c24} & \textbf{13.60}$\times$ & 4.43$\times$ & 1.80$\times$ & 1.43$\times$ \\
+\texttt{manifold\_mid} & \textbf{10.21}$\times$ & 6.87$\times$ & 2.39$\times$ & 1.40$\times$ \\
+\texttt{fma\_mfcc}     & \textbf{8.32}$\times$  & 6.14$\times$ & 2.14$\times$ & 1.16$\times$ \\
+\texttt{sift1m}        & \textbf{7.87}$\times$  & 5.69$\times$ & 1.97$\times$ & 1.15$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{An update is cheaper than a rebuild at every batch size tested}, from
+1.15 times at a 25\% batch to 13.6 times at 0.1\%. This reverses the practical
+advice that a $\Theta(n)$ update forces. When the cost of an update is set by
+the size of the graph, small batches are ruinous and the only defensible policy
+is to wait and batch as much as the latency budget allows. When it is set by the
+size of the batch, frequent small updates are the regime in which the method is
+furthest ahead of the alternative, and the choice of batch size returns to being
+an application decision about freshness rather than a constraint the algorithm
+imposes.
 \subsection{Multi-GPU Scaling}
 \label{sec:scaling}
 
-This is where the method's throughput advantage lies. Table~\ref{tab:scaling}
-reports strong scaling with the instance count held fixed across device counts.
+Table~\ref{tab:scaling} reports strong scaling of an update with the instance
+count held fixed across device counts.
 
 \begin{table}[!t]
-\caption{Strong scaling with the instance count fixed at 16. $f$ is the
-\emph{parallel fraction}, the share of update time spent in the instance phase,
-which is the only phase distributed across devices; it is measured on the
+\caption{Strong scaling of one update with the instance count fixed at 16. $f$
+is the \emph{parallel fraction}, the share of update time spent in the instance
+phase, which is the only phase distributed across devices; it is measured on the
 single-device run. ``@4'' denotes four GPUs. The Amdahl ceiling is the maximum
 speed-up attainable at four devices given $f$.}
 \label{tab:scaling}
@@ -891,39 +1098,40 @@ speed-up attainable at four devices given $f$.}
 \toprule
 data set & $n$ & $f$ & ceiling @4 & measured @4 & efficiency \\
 \midrule
-\texttt{capacity10m}  & 10\,M   & 0.941 & 3.40$\times$ & \textbf{3.23}$\times$ & 0.81 \\
-\texttt{gist1m}       & 100\,k  & 0.921 & 3.23$\times$ & \textbf{2.68}$\times$ & 0.67 \\
-\texttt{sift1m}       & 200\,k  & 0.869 & 2.87$\times$ & \textbf{2.53}$\times$ & 0.63 \\
-\texttt{manifold\_mid}& 100\,k  & 0.840 & 2.70$\times$ & \textbf{2.50}$\times$ & 0.63 \\
+\texttt{manifold\_mid}& 100\,k  & 0.897 & 3.01$\times$ & \textbf{2.22}$\times$ & 0.74 \\
+\texttt{capacity10m}  & 10\,M   & 0.934 & 3.31$\times$ & \textbf{2.16}$\times$ & 0.65 \\
+\texttt{sift1m}       & 200\,k  & 0.919 & 3.19$\times$ & \textbf{2.05}$\times$ & 0.64 \\
+\texttt{gist1m}       & 100\,k  & 0.934 & 3.31$\times$ & \textbf{1.93}$\times$ & 0.58 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Every measurement sits below its Amdahl ceiling \cite{amdahl}, and
-\textbf{efficiency rises with problem size}, from 0.63 at $n = 10^5$ to 0.81 at
-$n = 10^7$, because larger instances amortise the fixed per-job transfer. The
-largest configuration reaches \textbf{3.23 times} the single-device throughput
-on four GPUs. This trend is the strongest form of the scalability argument: the
-method does not merely tolerate more devices, it uses them better as the problem
-grows, which is the regime the design targets.
+These figures are lower than those a $\Theta(n)$ update produces, and the reason
+is the anchoring rather than a defect in the distribution. An update now carries
+work proportional to the batch, so there is less of it to divide and the fixed
+per-job transfer amortises over a smaller instance. The two results are not in
+competition: an update that is 12.7 times cheaper than a rebuild on one device
+and scales at 2.05 times on four is preferable to one that is 6.2 times cheaper
+and scales at 2.53 times, and the first configuration is the faster of the two
+in absolute terms at every device count.
 
-Note that $f$ is measured on the single-device run, and falls as devices are
-added, from 0.941 to 0.798 between one and four GPUs on \texttt{capacity10m},
-because the instance phase is exactly the part being parallelised and therefore
-shrinks. Taking $f$ from a parallel run would understate the ceiling and make
-every measurement appear to exceed it.
+The decomposition still bounds what distribution can achieve.
+\textbf{Parallelism is bounded by the instance count}: with a single instance,
+four GPUs deliver 0.95 to 0.99 times the single-device time, and speed-up
+appears only as instances are added. Raising the instance count therefore raises
+the attainable speed-up, from 1.35 to 1.57 times at four instances to 1.93 to
+2.22 at sixteen, but it also raises the absolute cost, because every instance
+carries the whole batch. On \texttt{sift1m} four instances on four GPUs complete
+an update in 1.889\,s against 2.614\,s for sixteen instances on the same four
+devices, so \emph{the instance count should be set to the device count} and the
+larger sweep is reported to show where the ceiling lies rather than as a
+recommended configuration.
 
-Two further results characterise the design. \textbf{Parallelism is bounded by
-the decomposition}: with a single instance, four GPUs deliver 0.99$\times$, while
-with two the speed-up appears at two devices and plateaus where the instances run
-out. \textbf{Per-device memory is exactly invariant with device count} and
-controlled entirely by the instance count (Fig.~\ref{fig:memory}). The response
-to a data set that does not fit is therefore to re-partition on the same
-hardware rather than to add devices or memory; a design that replicated data
-across devices, or whose per-device state grew with the device count, would not
-have this property. At $\kmax=128$ one instance over $10^7$ points requires
-8.29\,GiB and an 8\,GB device refuses it, matching our sizing model's
-prediction.
+\textbf{Per-device memory is exactly invariant with device count} and controlled
+entirely by the instance count (Fig.~\ref{fig:memory}). The response to a data
+set that does not fit is therefore to re-partition on the same hardware rather
+than to add devices or memory; a design that replicated data across devices, or
+whose per-device state grew with the device count, would not have this property.
 
 \begin{figure}[!t]
 \centering
@@ -931,26 +1139,26 @@ prediction.
 \begin{axis}[
   width=\columnwidth, height=4.4cm,
   xlabel={number of GPUs}, ylabel={per-device resident (GiB)},
-  xtick={1,2,3,4}, ymin=0, ymax=5.6,
+  xtick={1,2,3,4}, ymin=0, ymax=2.3,
   grid=both, grid style={black!12},
   legend style={font=\tiny, at={(0.98,0.98)}, anchor=north east, legend columns=2},
   label style={font=\footnotesize}, tick label style={font=\footnotesize},
   every axis plot/.append style={thick, mark size=1.3pt}
 ]
-\addplot[mark=*, black] coordinates {(1,4.936)(2,4.936)(3,4.936)(4,4.936)};
+\addplot[mark=*, black] coordinates {(1,1.956)(2,1.956)(3,1.956)(4,1.956)};
 \addlegendentry{1 instance}
-\addplot[mark=square*, black!70] coordinates {(1,3.010)(2,3.010)(3,3.010)(4,3.010)};
-\addlegendentry{2 instances}
-\addplot[mark=triangle*, black!55] coordinates {(1,2.011)(2,2.011)(3,2.011)(4,2.011)};
+\addplot[mark=square*, black!55] coordinates {(1,0.990)(2,0.990)(3,0.990)(4,0.990)};
 \addlegendentry{4 instances}
-\addplot[mark=diamond*, black!40] coordinates {(1,1.502)(2,1.502)(3,1.502)(4,1.502)};
+\addplot[mark=triangle*, black!40] coordinates {(1,0.822)(2,0.822)(3,0.822)(4,0.822)};
 \addlegendentry{8 instances}
-\addplot[mark=o, black!30] coordinates {(1,1.246)(2,1.246)(3,1.246)(4,1.246)};
+\addplot[mark=diamond*, black!30] coordinates {(1,0.737)(2,0.737)(3,0.737)(4,0.737)};
 \addlegendentry{16 instances}
 \end{axis}
 \end{tikzpicture}
-\caption{Per-device memory on \texttt{capacity10m} ($10^7$ points), flat across
-device count and set entirely by the instance count.}
+\caption{Per-device memory for one update on \texttt{capacity10m} ($10^7$
+points), flat across device count and set entirely by the instance count. The
+figures are lower than a uniform context requires at the same $n$, because an
+anchored instance is sized by the batch rather than by the graph.}
 \label{fig:memory}
 \end{figure}
 
@@ -960,15 +1168,91 @@ replaces (Table~\ref{tab:bridges}). And extracting all 32 spanning trees for
 $\mpts \in [1,\kmax]$ from one CORE-SG costs 71 to 303 times less than computing
 each from the complete graph, a payoff that is preserved after incremental
 construction.
+\subsection{Comparison with a GPU Rebuild: cuML}
+\label{sec:cuml}
+
+cuML \cite{cuml} implements HDBSCAN* on the GPU and has no update path, so every
+arriving batch obliges a full refit. That is the cost this work sets out to
+remove, and because both implementations are CUDA and share a device, the
+comparison can be made on wall clock rather than on cost slope alone. Both sides
+are driven over one arrival order, both produce HDBSCAN* labels at the same
+$\mpts$, and both are scored against exact HDBSCAN* recomputed on the points
+present at that batch. Our side is confined to a single device, since cuML's
+HDBSCAN* occupies one, so the figures below are per-device.
+
+\begin{table}[!t]
+\caption{One update plus one $\mathrm{MST}_{\mpts}$ extraction against one cuML
+refit, on \texttt{sift1m} with the batch fixed at 12{,}500 points. Both methods
+use one GPU. cuML's first batch is excluded, as it carries CUDA context
+initialisation.}
+\label{tab:cuml}
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+$n$ & this work & cuML & speed-up \\
+\midrule
+100\,k & 1.496\,s & 1.745\,s  & 1.17$\times$ \\
+200\,k & 1.851\,s & 7.153\,s  & 3.86$\times$ \\
+312\,k & 2.023\,s & 17.958\,s & 8.88$\times$ \\
+400\,k & 2.122\,s & 29.611\,s & \textbf{13.95}$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:cuml} shows the shape the design predicts. Our cost is nearly
+flat, 1.50 to 2.12 seconds across a fourfold increase in $n$, while cuML's grows
+from 1.75 to 29.6 seconds, so the ratio grows from 1.2 to 14.0 times. A single
+ratio would misstate this result in either direction; the slope is the claim.
+
+The crossover is at roughly $n = 10^5$. Below it cuML is the faster of the two,
+by 0.74 times at $n = 7.5 \times 10^4$, because at that size a refit is cheap
+and our per-update cost is dominated by phases that do not shrink with the
+batch. We report the crossover rather than restricting the comparison to the
+sizes above it.
+
+Using all four devices of the node rather than one moves our figure from 2.12 to
+1.31 seconds at $n = 4 \times 10^5$, a factor of 1.6 rather than the 4 the
+device count might suggest, because the seeding search runs on the host and is
+not distributed. Against cuML on its single device that reads as 17.7 times
+rather than 14.0. We report the per-device comparison as the result.
+
+\textbf{The two clusterings are not distinguishable.} Scored against the same
+per-batch reference, our ARI tracks cuML's to within 0.002 on
+\texttt{fma\_mfcc}, 0.887 to 0.935 against 0.885 to 0.936 across eight batches,
+with the two methods agreeing with each other at 0.934 to 0.998. On
+\texttt{manifold\_mid} we reach 0.995 to 1.0000 against cuML's 1.0000. A speed
+result without this column would not be a result, since a method may always be
+made faster by producing a worse answer.
+
+\textbf{cuML exhausts the device before we do.} Rebuilding on a single 8\,GB
+card, cuML completes $10^6$ points in 137.5\,s, $2 \times 10^6$ in 554.2\,s and
+$4 \times 10^6$ in 2212.3\,s, a growth of roughly four times per doubling, and
+fails with an out-of-memory condition at $8 \times 10^6$. Our per-device
+requirement for an update at $10^7$ points is 0.74 to 1.96\,GiB depending on the
+instance count (Fig.~\ref{fig:memory}) and is independent of $n$, so the same
+card completes the larger problem. This is a statement about what becomes
+possible rather than about speed, and it is the property the instance
+decomposition exists to provide.
+
+Finally, cuML serves one $\mpts$ per fit. Producing five values of $\mpts$
+requires five refits, which cost 9.1\,s at $n = 10^5$, 37.1\,s at
+$2 \times 10^5$ and 150.9\,s at $4 \times 10^5$. The CORE-SG serves the whole
+range from one graph, which is the property the original construction
+\cite{coresg} was designed for and which incremental maintenance preserves.
 
 \subsection{Comparison with FISHDBC}
 \label{sec:fishdbc}
 
-We drive both methods over one arrival order, export our spanning tree per
-batch, and convert it to HDBSCAN* labels using the same condensed-tree
-extraction FISHDBC itself calls, scoring both against one reference: exact
-HDBSCAN* recomputed on the points present at that batch. The only quantity that
-differs between the two rows is the spanning tree each method produced.
+FISHDBC \cite{fishdbc} remains the only published method we are aware of that
+maintains a density-based clustering structure under insertion at the
+granularity of individual points, and the comparison is informative because it
+is the opposite design decision: it maintains a spanning tree fed by candidate
+edges from a hierarchical navigable small world index \cite{hnsw}, and we avoid
+maintaining one. Both methods are driven over one arrival order and scored
+against exact HDBSCAN* recomputed on the points present at that batch, so the
+only quantity that differs between the two rows is the spanning tree each
+produced.
 
 \begin{table}[!t]
 \caption{ARI against exact HDBSCAN* on the points present at each batch.
@@ -980,32 +1264,43 @@ differs between the two rows is the spanning tree each method produced.
 \toprule
 data set & this work & FISHDBC & margin \\
 \midrule
-\texttt{manifold\_mid} & \textbf{1.0000} (all 8) & 0.9925--0.9962 & $+0.004$--$0.008$ \\
-\texttt{sift1m}        & 0.9920--0.9980 & 0.9745--0.9855 & $+0.009$--$0.022$ \\
+\texttt{sift1m}        & \textbf{0.9922--0.9971} & 0.9744--0.9855 & $+0.009$--$0.020$ \\
+\texttt{manifold\_mid} & 0.9784--\textbf{1.0000} & 0.9925--0.9962 & $-0.018$--$+0.007$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Our method is ahead on every batch of each data set (Table~\ref{tab:fishdbc})
-and recovers the reference clustering exactly at every point of the
-\texttt{manifold\_mid} stream. We exclude \texttt{fma\_mfcc}: its reference
-finds only two clusters until batch five and both methods' ARI collapses to
-approximately 0.09 as it destabilises, so the data set cannot support a quality
-claim in either direction, though the two methods agree with each other to
-within 0.014 throughout. And we do not compare wall-clock: FISHDBC is
-single-threaded Python against our C++/CUDA, so only the cost \emph{slope} is
-meaningful. As the graph doubled, per-batch cost grew 1.10 to 1.27 times for our
-method against 0.93 to 1.17 for FISHDBC, comparable, with a slight structural
-edge to FISHDBC, whose index insertion is $O(\log n)$ per point.
+On \texttt{sift1m} we are ahead at every batch (Table~\ref{tab:fishdbc}). On
+\texttt{manifold\_mid} the
+result is a crossover rather than a margin: FISHDBC is ahead for the first two
+batches, by 0.018 and 0.001, and we are ahead from the third onward, reaching
+exactly 1.0000 at the eighth. The early deficit is the seeding search working
+against a base graph that is itself still small, and it closes as the graph
+grows. We exclude \texttt{fma\_mfcc}: its reference finds only two clusters
+until batch five and both methods' ARI collapses to approximately 0.09 as it
+destabilises, so the data set cannot support a quality claim in either
+direction, though the two methods agree with each other to within 0.014
+throughout.
 
-Only one external method is compared because only one satisfies the two criteria
-in Section~\ref{sec:setup}: maintenance under insertion, at the granularity of
-individual points. The alternatives either operate over summaries or have no
-update path at all.
+We do not compare wall clock. FISHDBC is single-threaded Python against our
+C++/CUDA, so such a comparison measures the implementations rather than the
+methods. This is precisely the objection that does \emph{not} apply to cuML,
+which is why cuML carries the timing comparison.
+
+The cost \emph{slope} is comparable, and on it FISHDBC retains a structural
+advantage at this scale. As the graph doubled, per-batch cost grew 1.26 to 1.57
+times for our method against 0.99 to 1.17 for FISHDBC, whose index insertion is
+$O(\log n)$ per point. Our own flat-cost result (Section~\ref{sec:incremental})
+is measured at $n \ge 10^5$, where the instance descent dominates an update. At
+the $n = 2 \times 10^4$ that a single-threaded baseline makes affordable, the
+descent is already bounded by the batch but the phases that follow it, the
+hubness refresh, the bridge spanning tree and the connectivity pass, still carry
+terms in $n$ and are then the majority of an update. Bounding those is the
+remaining obstacle to a per-batch cost that is flat at every scale rather than
+at the scales the method targets.
 
 The two methods also differ in scope. FISHDBC serves a single $\mpts$, whereas
 the CORE-SG serves the whole range from one graph.
-
 \subsection{Parameter Sensitivity}
 \label{sec:sensitivity}
 
@@ -1035,39 +1330,94 @@ restricted descent that follows a batch (Section~\ref{sec:knn}); a larger cap
 lets more existing points revise their neighbour lists after new data arrives.
 Quality is monotone in that cap, and how much it matters is a property of the
 data: 0.007 percentage points of recall on \texttt{fma\_mfcc} against 0.72 on
-\texttt{manifold\_wide}, for 0.6\% more time. The cap is expressed as a fraction
-of $n$, which makes the cost of an update linear in $n$ against the quadratic
-cost of the rebuild it replaces. Expressing it instead as an absolute ceiling
-would tie the refinement set to the batch size alone, and whether that retains
-quality as $n$ grows is a question left open. All reported results use the same
-shipped value.
+\texttt{manifold\_wide}. The cap is now expressed per arriving point rather than
+as a fraction of $n$, which is what ties the refinement set to the batch, and
+Section~\ref{sec:incrementalquality} reports its effect at the operating scale.
+
+Two knobs of the seeding search were swept and are reported where they matter.
+The beam width $\ef$ is the one that moves quality, and its curve is in
+Table~\ref{tab:ef}. The number of reverse edges consulted per expanded node
+changes little on data whose $k$-NN graph is connected, but disabling reverse
+edges entirely costs 3.0 percentage points of recall on \texttt{manifold\_wide},
+which fragments into 271 components, since a walk following forward edges alone
+cannot leave a component it enters. The context budget saturates early: raising
+it from half a neighbour to one per arriving point is worth 2.2 percentage
+points on \texttt{sift1m}, and beyond one nothing further is gained, so the
+instances are sized at the smallest budget that reaches the plateau.
+
+The prefix rule of Section~\ref{sec:knn}, by which an arriving point inherits
+only part of its seed list into the instance, produced no signal in this sweep
+and does so for an instructive reason. The sweep runs at four instances, each of
+which carries the whole batch, and that redundancy is by itself enough to
+compare the arriving points with one another. Measured at a \emph{single}
+instance on the single-GPU machine, where no such redundancy exists, recall on
+the arriving points falls from 0.997 to 0.755 at a batch worth 20\% of the graph
+when the whole seed list is inherited, because a neighbour list that is already
+full admits no random candidate and the structure internal to the batch is never
+built. The rule is therefore stated as part of the method rather than as a
+parameter: it costs nothing when the instance count hides the problem, and it is
+required when the instance count does not.
 
 % ===========================================================================
 \section{Conclusion and Future Work}
-% ===========================================================================
 
 We have made the CORE-SG incremental and multi-GPU by attacking its two
-constituent graphs separately: sampled-instance dynamic NN-Descent for the
+constituent graphs separately: anchored-instance dynamic NN-Descent for the
 neighbourhood graph, and an anti-hub bridge estimate for the spanning tree whose
 selected set is sized independently of $n$ and therefore requires no incremental
 maintenance.
 
-The estimate produces spanning trees at most 0.024\% heavier than exact at ARI
-exactly 1.0000, while building 10.5 to 36 times faster than the exact spanning
-tree it replaces. Incremental construction produces a better graph than a
-compute-matched rebuild, by up to 7.0 percentage points of recall, and at a 25\%
-batch it costs 0.97 to 1.24 times a single rebuild while remaining more
-accurate. On the time axis the strongest result is distribution: four GPUs
-deliver 3.23 times the single-device throughput at $10^7$ points, with
-efficiency \emph{rising} with problem size and per-device memory exactly
-invariant with device count, so larger problems are served better by more
-devices rather than worse. Extracting the whole $\mpts$ range from one graph
+The decisive property is that the work an update performs is set by the size of
+the batch and not by the size of the graph. The nodes one update descends over
+are constant, 75{,}933 across a tenfold increase in $n$, where a uniformly
+sampled context reaches the whole graph. An update is consequently cheaper than
+a rebuild on every backend tested, and the margin widens with scale rather than
+narrowing: 1.8 to 12.7 times as $n$ grows from $10^5$ to $10^6$, and 1.15 to
+13.6 times as the batch shrinks from a quarter of the graph to a thousandth.
+Against NVIDIA cuML's GPU HDBSCAN* on the same single device, which must refit,
+a batch is served 14.0 times faster at $4 \times 10^5$ points while the two
+clusterings remain statistically indistinguishable, and cuML exhausts an 8\,GB
+device at $8 \times 10^6$ points where our per-device requirement is constant.
+Against FISHDBC, the closest published incremental method, we are ahead on ARI
+at every batch of \texttt{sift1m} and recover the reference clustering exactly
+by the end of the \texttt{manifold\_mid} stream, while additionally serving a
+range of $\mpts$ for which that method has no equivalent.
+
+The bridge estimate produces spanning trees at most 0.024\% heavier than exact
+at ARI exactly 1.0000, while building 10.5 to 36 times faster than the exact
+spanning tree it replaces. Extracting the whole $\mpts$ range from one graph
 remains 71 to 303 times cheaper than recomputing each, and that payoff survives
-incremental construction. Against the closest published incremental method the
-approach is ahead on every batch tested, while additionally serving a range of
-$\mpts$ for which that method has no equivalent.
+incremental construction; cuML has no equivalent, requiring one fit per value.
+On four GPUs an update reaches 1.93 to 2.22 times the single-device throughput
+with per-device memory exactly invariant with device count.
+
+The cost of not re-descending the graph is quality on the neighbourhood graph
+itself. $k$-NN recall after eight batches sits 3 to 12 percentage points below a
+rebuild, concentrated in the tail of the neighbourhood, while the object the
+method exists to produce is preserved: DBSCAN* ARI against the rebuild is 0.927
+to 0.995 and spanning-tree weight is within 0.7\% on every real data set. The
+deficit is a dial rather than a fixed loss, and on the two data sets where a
+rebuild is itself weak a wider seeding beam overtakes it while remaining the
+cheaper of the two. On \texttt{gist1m}, at $d = 960$, it does not, which we
+state as the scope of the cost claim rather than as an incidental result.
 
 Several directions follow.
+
+\textbf{The seeding search belongs on the accelerator.} It runs on the host and
+accounts for the majority of an update at moderate $n$, which is why the two
+context strategies cross over below $3 \times 10^5$ points, why four devices
+reduce an update by a factor of 1.6 rather than 4, and why multi-GPU efficiency
+is lower than a $\Theta(n)$ update achieves. Batched graph search is well served
+by existing GPU work, and moving it would address all three at once.
+
+\textbf{The phases after the descent still carry terms in $n$.} The hubness
+refresh, the bridge spanning tree and the connectivity pass do not shrink with
+the batch, and although they are a small share of an update at the scales this
+work targets, they are the majority of one at $n = 2 \times 10^4$ and are why a
+per-batch cost that is flat at $n \ge 10^5$ still grows at smaller sizes. They
+are also what places the crossover against cuML at $n \approx 10^5$. Bounding
+them is what would make the cost claim scale-free rather than true above a
+threshold.
 
 \textbf{Is the spanning tree needed on real data at all?} Real $k$-NN graphs are
 already connected at the operating $\kmax$, which suggests that for a large
@@ -1077,18 +1427,20 @@ Characterising which data requires it, and detecting that cheaply as our
 connectivity check does, would simplify density-based clustering pipelines
 beyond this system.
 
-\textbf{Sampled-instance descent as a construction method.}
-Section~\ref{sec:incremental} shows overlapping sampled instances beating a
-single construction pass at matched compute. Studied on its own, varying the
-instance count, the overlap fraction and the number of passes, this may be a
-better way to build large $k$-NN graphs, independent of incrementality.
+\textbf{Repairing points the stream has passed by.} Recall over arriving points
+is flat across a stream while recall over all points declines and then settles,
+because points inserted early are not found by later searches. The refinement
+budget recovers part of this and saturates against a second ceiling before its
+effect is exhausted. A repair policy that revisits stale regions directly, at a
+cost still proportional to the batch, is the natural next step.
+
+\textbf{Anchored instances as a construction method.} The decomposition is not
+specific to incrementality; whether anchoring a context on a search improves the
+initial build as well, independent of any stream, is untested.
 
 \textbf{Intrinsic dimensionality as a general parameter scale.} The anti-hub
 count was one instance of a broader pattern: any parameter in a density-based
 method that scales with ambient $d$ deserves the same scrutiny.
-
-\textbf{The form of the refinement cap}, discussed in
-Section~\ref{sec:sensitivity}.
 
 \textbf{Multi-node execution and deletion.} The instance abstraction is already
 the right unit to ship to another machine, and top-$k$ merging is a commutative,
@@ -1096,7 +1448,6 @@ associative reduction, so it distributes without synchronisation; because the
 anti-hub set is sized independently of $n$, the bridge spanning tree can be
 gathered onto one machine at any scale. Deletion is untouched and is the harder
 direction.
-
 \section*{Acknowledgment}
 TODO.
 
