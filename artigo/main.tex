@@ -471,11 +471,12 @@ a cap expressed as a fraction of $n$ grows with the graph whatever its constant
 and would reintroduce the $\Theta(n)$ term the anchoring removes. We
 characterise its effect in Section~\ref{sec:sensitivity}.
 
-Taken together, the nodes an instance visits are a function of $\ef$, $k$ and
-the batch size alone. Section~\ref{sec:incremental} verifies that this holds in
-practice, and that it is what makes an update cheaper than a rebuild rather than
-merely cheaper than a rebuild on data small enough for the difference not to
-matter.
+Taken together, an update carries two costs and neither refers to $n$: the
+seeding search, at $O(\ef k d)$ per arriving point, and the instances, whose
+node count is the batch size plus a context budget expressed as a multiple of
+it. Section~\ref{sec:incremental} verifies that this holds in practice, and that
+it is what makes an update cheaper than a rebuild rather than merely cheaper
+than a rebuild on data small enough for the difference not to matter.
 
 \subsection{The MST: Anti-Hub Bridges}
 \label{sec:bridges}
@@ -583,14 +584,19 @@ similarity, since single-linkage merge heights \emph{are} the sorted MST
 weights; and DBSCAN* ARI \cite{ari} between the flat clusterings cut from both
 trees at a common threshold.
 
-Two further quantities need definition. The \emph{component count of the $k$-NN
-graph before repair} is the number of connected components the neighbourhood
-graph falls into on its own, with no bridges added and no repair applied; it
-states how much work the bridges have to do, and a value of 1 means they have
-none. The \emph{phase-split wall clock} decomposes an update into the instance
-descent, the merge, the restricted refinement, the hubness refresh, the bridge
-MST and the connectivity pass, so that the parallel portion can be separated
-from the sequential remainder.
+Three further quantities need definition. The \emph{component count of the
+$k$-NN graph before repair} is the number of connected components the
+neighbourhood graph falls into on its own, with no bridges added and no repair
+applied; it states how much work the bridges have to do, and a value of 1 means
+they have none. The \emph{phase-split wall clock} decomposes an update into the
+seeding search, the instance descent, the merge, the restricted refinement, the
+hubness refresh, the bridge MST and the connectivity pass, so that the parallel
+portion can be separated from the sequential remainder. And the \emph{instance
+node count} is the number of nodes the instances of one update descend over,
+summed across instances; it is the quantity that distinguishes an update whose
+cost is set by the batch from one whose cost is set by the graph, and it is
+reported directly because it is a property of the algorithm rather than of the
+machine it ran on.
 
 We deliberately do \emph{not} report edge overlap between spanning trees. All
 MSTs of a graph share a weight multiset, and for any threshold the components of
@@ -919,7 +925,8 @@ data.
 \begin{table}[!t]
 \caption{After eight batches, against a rebuild on the same final data.
 ``ARI'' and ``weight'' compare the flat clustering and the spanning-tree weight
-of the incremental result against that rebuild. 3 seeds, cluster hardware.}
+of the incremental result against that rebuild. All four columns come from one
+experiment, 5 seeds, cluster hardware.}
 \label{tab:quality}
 \centering
 \footnotesize
@@ -927,21 +934,21 @@ of the incremental result against that rebuild. 3 seeds, cluster hardware.}
 \toprule
 data set & recall & rebuild & ARI & weight \\
 \midrule
-\texttt{manifold\_mid}  & 0.9662 & 0.9960 & 0.9951 & 0.9504 \\
-\texttt{manifold\_wide} & 0.9378 & 0.9892 & 0.9890 & 0.8915 \\
-\texttt{fma\_mfcc}      & 0.9191 & 0.9913 & 0.9876 & 1.0030 \\
+\texttt{manifold\_mid}  & 0.9658 & 0.9928 & 0.9951 & 0.9504 \\
+\texttt{manifold\_wide} & 0.9373 & 0.9849 & 0.9890 & 0.8915 \\
+\texttt{fma\_mfcc}      & 0.9189 & 0.9840 & 0.9876 & 1.0030 \\
+\texttt{sift1m}         & 0.9153 & 0.9761 & 0.9921 & 1.0018 \\
 \texttt{fma\_chroma}    & 0.9028 & 0.9802 & 0.9924 & 1.0072 \\
-\texttt{sift1m}         & 0.9155 & 0.9817 & 0.9921 & 1.0018 \\
-\texttt{20ng\_pca500}   & 0.7917 & 0.8247 & 0.9270 & 1.0013 \\
-\texttt{gist1m}         & 0.7704 & 0.8885 & 0.9783 & 1.0040 \\
-\texttt{glove100}       & 0.7490 & 0.7743 & 0.9684 & 1.0018 \\
+\texttt{20ng\_pca500}   & 0.7879 & 0.8406 & 0.9270 & 1.0013 \\
+\texttt{gist1m}         & 0.7704 & 0.8905 & 0.9783 & 1.0040 \\
+\texttt{glove100}       & 0.7489 & 0.7886 & 0.9684 & 1.0018 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 Recall is 3 to 12 percentage points below a rebuild. The clustering is not:
 DBSCAN* ARI against the rebuild is 0.927 to 0.995, and the spanning-tree weight
-ratio is within 0.7\% on every real data set. The two observations are
+ratio is within 0.8\% on every real data set. The two observations are
 consistent, because the recall that is lost sits in the tail of the
 neighbourhood while the extracted tree is determined by the core distances at
 $\mpts \ll \kmax$ and by the shortest edges, which survive. The tree is the
@@ -962,8 +969,9 @@ the anchored update overtakes it while remaining the cheaper of the two.
 
 \begin{table}[!t]
 \caption{Beam width against recall and cost, eight batches, 2 seeds.
-``speed-up'' is one update against one rebuild at the same $n$. The rebuild's
-own recall is 0.774, 0.824 and 0.889 respectively.}
+``speed-up'' is one update against one rebuild at the same $n$. The rebuild
+measured in this same sweep reaches 0.774, 0.824 and 0.889 respectively, which
+is the line each row should be read against.}
 \label{tab:ef}
 \centering
 \footnotesize
@@ -1000,7 +1008,10 @@ allowance from two to four nodes per arriving point moves \texttt{sift1m} from
 update time from 1.195 to 1.200 seconds. Beyond four nodes it produced no
 further change, because a second ceiling expressed as a fraction of $n$ becomes
 the binding one at these sizes, so whether a genuinely larger repair budget
-helps is a question left open.
+helps is a question left open. Every other result in this paper was measured at
+two, which is the value the sweep was run against; four is the setting this
+measurement argues for, and the recall column of Table~\ref{tab:quality} would
+move up accordingly.
 
 \subsection{Amortisation and Batch Size}
 \label{sec:batchsize}
@@ -1042,7 +1053,7 @@ Two costs move in opposite directions here, and separating them is what makes
 the figure readable.
 
 \textbf{Per point, larger batches are cheaper.} Inserting at 0.1\% costs 34 to
-35 times more per point than at 25\%, because the fixed phases of an update run
+37 times more per point than at 25\%, because the fixed phases of an update run
 once per insertion regardless of how many points arrived. Their share of an
 update rises from 6.6 to 8.5\% at a 25\% batch to 38.1 to 49.9\% at 0.1\%. This
 is amortisation, and it is unchanged in kind by the anchoring.
@@ -1098,10 +1109,10 @@ speed-up attainable at four devices given $f$.}
 \toprule
 data set & $n$ & $f$ & ceiling @4 & measured @4 & efficiency \\
 \midrule
-\texttt{manifold\_mid}& 100\,k  & 0.897 & 3.01$\times$ & \textbf{2.22}$\times$ & 0.74 \\
-\texttt{capacity10m}  & 10\,M   & 0.934 & 3.31$\times$ & \textbf{2.16}$\times$ & 0.65 \\
-\texttt{sift1m}       & 200\,k  & 0.919 & 3.19$\times$ & \textbf{2.05}$\times$ & 0.64 \\
-\texttt{gist1m}       & 100\,k  & 0.934 & 3.31$\times$ & \textbf{1.93}$\times$ & 0.58 \\
+\texttt{manifold\_mid}& 100\,k  & 0.897 & 3.06$\times$ & \textbf{2.22}$\times$ & 0.73 \\
+\texttt{capacity10m}  & 10\,M   & 0.934 & 3.34$\times$ & \textbf{2.16}$\times$ & 0.65 \\
+\texttt{sift1m}       & 200\,k  & 0.919 & 3.22$\times$ & \textbf{2.05}$\times$ & 0.64 \\
+\texttt{gist1m}       & 100\,k  & 0.934 & 3.34$\times$ & \textbf{1.93}$\times$ & 0.58 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1117,7 +1128,7 @@ in absolute terms at every device count.
 
 The decomposition still bounds what distribution can achieve.
 \textbf{Parallelism is bounded by the instance count}: with a single instance,
-four GPUs deliver 0.95 to 0.99 times the single-device time, and speed-up
+adding devices delivers 0.92 to 0.97 times the single-device time, and speed-up
 appears only as instances are added. Raising the instance count therefore raises
 the attainable speed-up, from 1.35 to 1.57 times at four instances to 1.93 to
 2.22 at sixteen, but it also raises the absolute cost, because every instance
@@ -1212,9 +1223,9 @@ batch. We report the crossover rather than restricting the comparison to the
 sizes above it.
 
 Using all four devices of the node rather than one moves our figure from 2.12 to
-1.31 seconds at $n = 4 \times 10^5$, a factor of 1.6 rather than the 4 the
+1.69 seconds at $n = 4 \times 10^5$, a factor of 1.3 rather than the 4 the
 device count might suggest, because the seeding search runs on the host and is
-not distributed. Against cuML on its single device that reads as 17.7 times
+not distributed. Against cuML on its single device that reads as 17.5 times
 rather than 14.0. We report the per-device comparison as the result.
 
 \textbf{The two clusterings are not distinguishable.} Scored against the same
@@ -1406,7 +1417,7 @@ Several directions follow.
 \textbf{The seeding search belongs on the accelerator.} It runs on the host and
 accounts for the majority of an update at moderate $n$, which is why the two
 context strategies cross over below $3 \times 10^5$ points, why four devices
-reduce an update by a factor of 1.6 rather than 4, and why multi-GPU efficiency
+reduce an update by a factor of 1.3 rather than 4, and why multi-GPU efficiency
 is lower than a $\Theta(n)$ update achieves. Batched graph search is well served
 by existing GPU work, and moving it would address all three at once.
 
