@@ -142,9 +142,9 @@ heavier than exact while producing identical flat clusterings, and costs 10.5 to
 36 times less. The nodes an update visits are constant as the graph grows from
 $10^5$ to $10^6$ points, so an update is cheaper than a rebuild on every backend
 tested and the margin widens with scale, from 1.8 to 12.7 times. Against NVIDIA
-cuML's GPU HDBSCAN on the same single device, which has no update path, a batch
+cuML's GPU HDBSCAN* on the same single device, which has no update path, a batch
 is served 14.0 times faster at $4 \times 10^5$ points while the two clusterings
-remain statistically indistinguishable, and cuML exhausts an 8\,GB device at
+agree to within 0.009 ARI at every batch, and cuML exhausts an 8\,GB device at
 $8 \times 10^6$ points where our per-device footprint is constant.
 \end{abstract}
 
@@ -609,7 +609,9 @@ tie-break yields a different but equally optimal tree.
 
 \subsection{Data Sets}
 
-Table~\ref{tab:datasets} lists the three families. \textbf{Real-paper} sets
+Table~\ref{tab:datasets} lists the three families, plus a single
+\textbf{capacity} set used only to probe per-device memory at $10^7$ points.
+\textbf{Real-paper} sets
 reproduce the recipes of \cite{coresg} for comparability, using FMA \cite{fma}
 and 20 Newsgroups \cite{newsgroups}. \textbf{Real-scale} sets exercise scale,
 high dimensionality and a non-Euclidean metric: SIFT1M and GIST1M
@@ -1059,9 +1061,11 @@ update rises from 6.6 to 8.5\% at a 25\% batch to 38.1 to 49.9\% at 0.1\%. This
 is amortisation, and it is unchanged in kind by the anchoring.
 
 \textbf{Per update against a rebuild, smaller batches win by more.} An anchored
-update costs what its batch costs, so halving the batch roughly halves the
-update while the rebuild it is compared against does not move at all.
-Table~\ref{tab:batchratio} gives the ratio.
+update shrinks as its batch shrinks, though not in proportion, since the fixed
+phases above do not shrink with it: a batch 250 times smaller yields an update
+roughly 7 times cheaper. The rebuild it is compared against does not move at
+all, because it is charged at the same final $n$ either way, so the ratio still
+improves throughout. Table~\ref{tab:batchratio} gives it.
 
 \begin{table}[!t]
 \caption{One update against one rebuild on the same data, $n = 50{,}000$,
@@ -1211,10 +1215,13 @@ $n$ & this work & cuML & speed-up \\
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:cuml} shows the shape the design predicts. Our cost is nearly
-flat, 1.50 to 2.12 seconds across a fourfold increase in $n$, while cuML's grows
-from 1.75 to 29.6 seconds, so the ratio grows from 1.2 to 14.0 times. A single
-ratio would misstate this result in either direction; the slope is the claim.
+Table~\ref{tab:cuml} shows the shape the design predicts. Across a fourfold
+increase in $n$ our cost rises by 42\%, from 1.50 to 2.12 seconds, while cuML's
+rises seventeenfold, from 1.75 to 29.6 seconds, so the ratio grows from 1.2 to
+14.0 times. Our own growth is not zero because the phases after the instance
+descent still carry terms in $n$, as Section~\ref{sec:fishdbc} discusses. A
+single ratio would misstate this result in either direction; the slope is the
+claim.
 
 The crossover is at roughly $n = 10^5$. Below it cuML is the faster of the two,
 by 0.74 times at $n = 7.5 \times 10^4$, because at that size a refit is cheap
@@ -1229,12 +1236,12 @@ not distributed. Against cuML on its single device that reads as 17.5 times
 rather than 14.0. We report the per-device comparison as the result.
 
 \textbf{The two clusterings are not distinguishable.} Scored against the same
-per-batch reference, our ARI tracks cuML's to within 0.002 on
-\texttt{fma\_mfcc}, 0.887 to 0.935 against 0.885 to 0.936 across eight batches,
-with the two methods agreeing with each other at 0.934 to 0.998. On
-\texttt{manifold\_mid} we reach 0.995 to 1.0000 against cuML's 1.0000. A speed
-result without this column would not be a result, since a method may always be
-made faster by producing a worse answer.
+per-batch reference on \texttt{fma\_mfcc}, our ARI is 0.887 to 0.935 against
+cuML's 0.885 to 0.936, and the largest difference at any single batch is 0.009,
+with the sign changing from batch to batch. On \texttt{manifold\_mid} we reach
+0.995 to 0.9999 against cuML's 1.0000, a deficit of 0.0001 from the third batch
+onward. A speed result without this column would not be a result, since a method
+may always be made faster by producing a worse answer.
 
 \textbf{cuML exhausts the device before we do.} Rebuilding on a single 8\,GB
 card, cuML completes $10^6$ points in 137.5\,s, $2 \times 10^6$ in 554.2\,s and
@@ -1320,9 +1327,14 @@ connected, which, per Section~\ref{sec:connectivity}, is every real data set.
 Re-run on fragmenting data the result is positive. The \emph{per-component
 quota} is the minimum number of anti-hubs each $k$-NN component contributes
 regardless of the global selection, introduced in Section~\ref{sec:bridges} to
-stop small components being passed over. On \texttt{manifold\_wide}, 300
-components are reduced to one even when the anti-hub count is halved and the
-quota is switched off entirely.
+stop small components being passed over. It is load-bearing on the data that
+fragments. \texttt{manifold\_wide}'s $k$-NN graph falls into 300 components, and
+the bridges reduce that to one at every quota from 1 upward, including when the
+anti-hub count is halved; with the quota switched off entirely, 12 components
+receive no anti-hub and no bridge can leave them. \texttt{manifold\_mid} behaves
+the same way at a smaller magnitude, 2.3 components against 1. The global budget
+is therefore sufficient for coverage only in combination with the quota, and one
+anti-hub per component is enough.
 
 The anti-hub count's dimensionality term matters more. The \emph{ambient
 dimensionality} $d$ is the number of coordinates each point carries, as opposed
@@ -1339,11 +1351,21 @@ load-bearing.
 The \emph{refinement cap} bounds how many nodes may participate in the
 restricted descent that follows a batch (Section~\ref{sec:knn}); a larger cap
 lets more existing points revise their neighbour lists after new data arrives.
-Quality is monotone in that cap, and how much it matters is a property of the
-data: 0.007 percentage points of recall on \texttt{fma\_mfcc} against 0.72 on
-\texttt{manifold\_wide}. The cap is now expressed per arriving point rather than
-as a fraction of $n$, which is what ties the refinement set to the batch, and
+Quality is monotone in that cap and it matters more than it did when each update
+re-descended the graph, which is consistent with the refinement now being the
+only step that revisits existing points. Widening it from 5\% of $n$ to
+unbounded is worth 1.16 to 1.32 percentage points of recall on
+\texttt{manifold\_mid}, \texttt{sift1m} and \texttt{fma\_mfcc}, and 2.67 on
+\texttt{manifold\_wide}, for 3.7 to 7.2\% more time. It saturates well before
+the ceiling, at a quarter of $n$ on three of the four sets. The cap is now
+expressed per arriving point rather than as a fraction of $n$, which is what
+ties the refinement set to the batch, and
 Section~\ref{sec:incrementalquality} reports its effect at the operating scale.
+
+An absolute ceiling must clear the batch size before it does anything. At
+$n = 50{,}000$ with 3{,}125-point batches, ceilings of 1{,}000 and 2{,}500 nodes
+produce exactly the same refinement fraction, 0.0829, as a 5\% cap, because the
+arriving points alone exceed them and are never discarded.
 
 Two knobs of the seeding search were swept and are reported where they matter.
 The beam width $\ef$ is the one that moves quality, and its curve is in
@@ -1387,8 +1409,9 @@ narrowing: 1.8 to 12.7 times as $n$ grows from $10^5$ to $10^6$, and 1.15 to
 13.6 times as the batch shrinks from a quarter of the graph to a thousandth.
 Against NVIDIA cuML's GPU HDBSCAN* on the same single device, which must refit,
 a batch is served 14.0 times faster at $4 \times 10^5$ points while the two
-clusterings remain statistically indistinguishable, and cuML exhausts an 8\,GB
-device at $8 \times 10^6$ points where our per-device requirement is constant.
+clusterings agree to within 0.009 ARI at every batch, and cuML exhausts an
+8\,GB device at $8 \times 10^6$ points where our per-device requirement is
+constant.
 Against FISHDBC, the closest published incremental method, we are ahead on ARI
 at every batch of \texttt{sift1m} and recover the reference clustering exactly
 by the end of the \texttt{manifold\_mid} stream, while additionally serving a
