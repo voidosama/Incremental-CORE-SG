@@ -64,8 +64,11 @@
   doi     = {10.1007/s10618-013-0311-4}
 }
 
+% The middle author is Moses Charikar. Several indexes, including the ACM record
+% this was first copied from, list him as "Charikar Moses", which BibTeX then
+% parses with the names reversed. Corrected 2026-08-08.
 @inproceedings{nndescent,
-  author    = {Dong, Wei and Moses, Charikar and Li, Kai},
+  author    = {Dong, Wei and Charikar, Moses and Li, Kai},
   title     = {Efficient K-Nearest Neighbor Graph Construction for Generic
                Similarity Measures},
   booktitle = {International Conference on World Wide Web (WWW)},
@@ -97,6 +100,7 @@
   year    = {2022},
   doi     = {10.1109/TBDATA.2021.3101517}
 }
+% NOTE: no page range. IEEE Xplore has it; add before submission.
 
 % Verified 2026-08-02: arXiv:1910.07283, submitted 16 Oct 2019, sole author.
 % Still arXiv-only -- no peer-reviewed version located.
@@ -159,6 +163,7 @@
   year    = {2021},
   doi     = {10.1109/TBDATA.2019.2907624}
 }
+% NOTE: no page range. IEEE Xplore has it; add before submission.
 
 @article{hubs,
   author  = {Radovanovi{\'c}, Milo{\v s} and Nanopoulos, Alexandros and Ivanovi{\'c}, Mirjana},
@@ -309,17 +314,36 @@
 }
 % NOTE: page range not confirmed -- check against the proceedings.
 
-@article{amdahl,
-  author  = {Amdahl, Gene M.},
-  title   = {Validity of the Single Processor Approach to Achieving Large Scale
-             Computing Capabilities},
-  journal = {AFIPS Conference Proceedings},
-  volume  = {30},
-  pages   = {483--485},
-  year    = {1967}
+% This is a conference paper, not a journal article: the AFIPS Conference
+% Proceedings are proceedings, and @article produced a bibliography entry with a
+% volume number and no venue. Changed to @inproceedings 2026-08-08.
+@inproceedings{amdahl,
+  author    = {Amdahl, Gene M.},
+  title     = {Validity of the Single Processor Approach to Achieving Large Scale
+               Computing Capabilities},
+  booktitle = {AFIPS Spring Joint Computer Conference},
+  pages     = {483--485},
+  year      = {1967}
 }
 
-@article{cuml,
+% cuML has no canonical paper, and in particular its GPU HDBSCAN* has no
+% dedicated peer-reviewed description, so the software itself is cited. This is
+% the honest form: the claim in the text is about the behaviour of a specific
+% implementation, not about a published algorithm.
+%
+% TODO before submission: replace 25.02 with the version actually installed on
+% the cluster (conda list cuml), since the timings are version specific.
+@misc{cuml,
+  author       = {{RAPIDS Development Team}},
+  title        = {{cuML}: {GPU} Machine Learning Algorithms},
+  howpublished = {\url{https://github.com/rapidsai/cuml}},
+  year         = {2025},
+  note         = {NVIDIA RAPIDS, version 25.02}
+}
+
+% Kept as the general RAPIDS reference in case the venue prefers a peer-reviewed
+% citation alongside the software one. Not currently cited in the text.
+@article{rapids,
   author  = {Raschka, Sebastian and Patterson, Joshua and Nolet, Corey},
   title   = {Machine Learning in {Python}: Main Developments and Technology
              Trends in Data Science, Machine Learning, and Artificial
@@ -330,7 +354,3 @@
   pages   = {193},
   year    = {2020}
 }
-% NOTE: cuML has no single canonical paper. This is the usual citation for the
-% RAPIDS/cuML stack; the GPU HDBSCAN* implementation specifically is described
-% in Nolet et al., "Bringing UMAP Closer to the Speed of Light with GPU
-% Acceleration" and in the cuML documentation. Confirm which the venue prefers.

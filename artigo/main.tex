@@ -568,21 +568,37 @@ the bridge computation it guards.
 
 \subsection{Ground Truth: The Exact CORE-SG}
 
-Every quality claim is measured against the \emph{exact} CORE-SG, an exact
-$k$-NN graph by brute force plus an exact $\mathrm{MST}_{\kmax}$, and never
-against human class labels. The claim under test is that an approximation
-matches the object it approximates. Scoring against class labels would instead
-measure whether HDBSCAN* suits a given data set, which is a problem out of this
-work's scope.
+Quality is measured against exact computations and never against human class
+labels. The claim under test is that an approximation matches the object it
+approximates. Scoring against class labels would instead measure whether
+HDBSCAN* suits a given data set, which is a problem out of this work's scope.
+
+Which exact object serves as the reference depends on what is being asked, and
+three are used. The bridge estimate is scored against the \emph{exact} CORE-SG,
+an exact $k$-NN graph by brute force plus an exact $\mathrm{MST}_{\kmax}$, since
+the question is whether the estimate matches the spanning tree it replaces.
+$k$-NN recall is scored against an exact brute-force $k$-NN graph over the points
+present. The external comparisons are scored against exact HDBSCAN* recomputed
+on the points present at that batch, which is the only reference both methods
+can share.
+
+One comparison uses a different reference on purpose. When asking what
+incremental maintenance costs in quality, the incremental result is compared
+against a \emph{rebuild} rather than against an exact CORE-SG, because the
+question there is whether updating changes the answer a practitioner would
+otherwise have obtained, and a rebuild is that answer. Comparing two
+independently built CORE-SGs has a known artefact, in that their $k$-NN halves
+differ by more than the effect under test, so this comparison is reported for
+the clustering and the spanning-tree weight and not used to rank bridge quality.
 
 \subsection{Metrics}
 
 We report $k$-NN recall, the fraction of true $k$ nearest neighbours present in
-the approximate graph; MST total weight ratio, approximate over exact; the
-largest gap between the two sorted weight profiles, which measures dendrogram
-similarity, since single-linkage merge heights \emph{are} the sorted MST
-weights; and DBSCAN* ARI \cite{ari} between the flat clusterings cut from both
-trees at a common threshold.
+the approximate graph; MST total weight ratio, approximate over exact; and
+DBSCAN* ARI \cite{ari} between the flat clusterings cut from both trees at a
+common threshold. The weight ratio is a statement about the dendrogram and not
+only about a total, because the sorted MST weights \emph{are} the single-linkage
+merge heights.
 
 Three further quantities need definition. The \emph{component count of the
 $k$-NN graph before repair} is the number of connected components the
@@ -745,11 +761,15 @@ standard deviation of exactly zero across 5.
 Bridges can only be evaluated where the $k$-NN graph actually fragments.
 Table~\ref{tab:bridges} restricts to the data sets that do, with the $k$-NN
 graph held exact on both arms so that the bridge estimate is the only variable.
+Because the reference is an $O(n^2 d)$ spanning tree, every row runs at
+$n = 4{,}000$; \texttt{sift1m} therefore appears here with two components,
+whereas at its full $n$ the same data set is connected
+(Table~\ref{tab:datasets}).
 
 \begin{table}[!t]
-\caption{Anti-hub bridges against the exact $\mathrm{MST}_{\kmax}$. Both arms
-share an exact $k$-NN graph. Speed-up is of bridge construction against the
-exact spanning tree it replaces.}
+\caption{Anti-hub bridges against the exact $\mathrm{MST}_{\kmax}$, $n = 4{,}000$
+on every row. Both arms share an exact $k$-NN graph. Speed-up is of bridge
+construction against the exact spanning tree it replaces.}
 \label{tab:bridges}
 \centering
 \footnotesize
@@ -848,8 +868,9 @@ contains genuinely density-separated components each holding many points, a
 property our synthetic family has by construction, and real data, at these
 scales, largely lacks.
 
-The connectivity observed is not a residual error of NN-Descent in the form of
-long cross-component edges that connect a graph an exact $k$-NN would leave in
+\textbf{The connectivity is not an artefact of approximation.} It is not a
+residual error of NN-Descent in the form of long cross-component edges that
+connect a graph an exact $k$-NN would leave in
 pieces. At the operating $\kmax$: on \texttt{manifold\_c24} the exact graph
 yields 24 components and the approximate graph 24 to 28, since a missed
 neighbour removes an edge while a substituted one stays local. The effect does
@@ -1104,8 +1125,9 @@ count held fixed across device counts.
 \caption{Strong scaling of one update with the instance count fixed at 16. $f$
 is the \emph{parallel fraction}, the share of update time spent in the instance
 phase, which is the only phase distributed across devices; it is measured on the
-single-device run. ``@4'' denotes four GPUs. The Amdahl ceiling is the maximum
-speed-up attainable at four devices given $f$.}
+single-device run. ``@4'' denotes four GPUs. The Amdahl \cite{amdahl} ceiling is
+the maximum speed-up attainable at four devices given $f$, that is
+$1/((1-f) + f/4)$.}
 \label{tab:scaling}
 \centering
 \footnotesize
