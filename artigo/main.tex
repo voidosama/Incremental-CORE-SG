@@ -658,11 +658,19 @@ Section~\ref{sec:bridgeresults}, where both arms share one exact $k$-NN half.
 \subsection{Metrics}
 
 We report $k$-NN recall, the fraction of true $k$ nearest neighbours present in
-the approximate graph; MST total weight ratio, approximate over exact; and
-DBSCAN* ARI \cite{ari} between the flat clusterings cut from both trees at a
-common threshold. The weight ratio is a statement about the dendrogram and not
-only about a total, because the sorted MST weights \emph{are} the single-linkage
-merge heights.
+the approximate graph; MST total weight ratio, approximate over exact; the
+largest pointwise gap between the two sorted weight profiles, which states how
+far the worst-affected merge moved, since the sorted MST weights \emph{are} the
+single-linkage merge heights; the number of edges of one tree absent from the
+other; and DBSCAN* ARI \cite{ari} between the flat clusterings cut from both
+trees at a common threshold.
+
+The last two answer different questions and both are needed. A differing edge
+count of zero establishes that two trees are identical, which no aggregate can;
+a weight ratio establishes whether a difference cost anything, which a count
+cannot. The ARI is the weakest of the four wherever the two trees are extracted
+from graphs sharing a common subgraph, for the reason given in
+Section~\ref{sec:bridgeresults}.
 
 Three further quantities need definition. The \emph{component count of the
 $k$-NN graph before repair} is the number of connected components the
@@ -854,6 +862,16 @@ DBSCAN* ARI exactly 1.0000, for 10.5 to 36 times less work. At full scale
 \texttt{manifold\_wide} fragments into 271 components and the bridges alone
 reduce that to one.
 
+The weight ratio is the column carrying that claim, and the ARI column should be
+read with a caveat we established while running the ablation of
+Section~\ref{sec:connectivity}. The threshold at which both trees are cut is the
+mean edge weight of the exact tree, which sits well below the merge heights a
+bridge affects, and both arms of this table share every $k$-NN edge by
+construction. The two labellings therefore agree on the short edges whatever the
+bridges did, and a value of exactly 1.0000 partly reflects that insensitivity
+rather than the quality of the estimate. The weight ratio and the profile gap do
+not share the limitation, since they compare the trees directly.
+
 \subsection{Real \emph{k}-NN Graphs Are Already Connected}
 \label{sec:connectivity}
 
@@ -913,16 +931,89 @@ manifold sets never do. Ambient dimensionality does not explain the threshold:
 
 Three observations follow.
 
-\textbf{The MST acts as a guard against fragmentation rather than as essential
-structure.} If the $k$-NN graph is already connected, the spanning tree in
-\eqref{eq:coresg} adds no edges that the neighbourhoods have not already
-supplied, so the union in \eqref{eq:coresg} equals its first term and the second
-term can be omitted without changing any extracted clustering. This also
-explains why an approximation as coarse as ours suffices on such data. Deriving
-the component labelling costs 0.08 to 3.5\,ms across our data sets against 5.3
-to 222\,ms of hubness and bridge work, a factor of 48 to 136, so testing
-connectivity first and skipping the bridge computation when it holds costs
-little.
+\textbf{The spanning tree acts as a guard against fragmentation, and contributes
+little else on connected data.} Where the $k$-NN graph is already one component,
+the bridges cannot be joining anything, and it is tempting to conclude that they
+change nothing. Connectivity alone does not establish that. An MST over the
+complete mutual-reachability graph may contain a short edge directly between two
+regions that the $k$-NN graph joins only by a long detour around them, the
+configuration \cite{coresg} illustrates with a horseshoe; the two graphs are then
+both connected while inducing different hierarchies. Table~\ref{tab:ablation}
+settles the question by extracting a tree from the $k$-NN half alone, with no
+bridges and no repair, and scoring it against the exact CORE-SG.
+
+\begin{table}[!t]
+\caption{The $k$-NN half alone against the exact CORE-SG, with the $k$-NN half
+held exact on both sides. ``differs'' counts edges of the exact tree that this
+arm does not contain, out of $n-1$. A weight ratio can never fall below 1 for a
+spanning tree over a subgraph, so any excess is a detour the $k$-NN edges forced.
+2 seeds; $\kmax = 32$ throughout.}
+\label{tab:ablation}
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+ & & \multicolumn{3}{c}{differs at $\mpts$} & weight ratio \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-6}
+data set & $n$ & $\le 8$ & 16 & 32 & at $\mpts=\kmax$ \\
+\midrule
+\texttt{sift1m}   & 25\,k  & 0 & 1 & 1  & 1.0000027 \\
+                  & 50\,k  & 0 & 0 & 4  & 1.0000010 \\
+                  & 100\,k & 0 & 0 & 5  & 1.0000008 \\
+\texttt{fma\_mfcc}& 25\,k  & 0 & 0 & 8  & 1.0000012 \\
+                  & 50\,k  & 0 & 0 & 5  & 1.0000003 \\
+                  & 100\,k & 1 & 1 & 9  & 1.0000018 \\
+\texttt{glove100} & 25\,k  & 0 & 2 & 5  & 1.0000043 \\
+                  & 50\,k  & 0 & 1 & 6  & 1.0000035 \\
+                  & 100\,k & 1 & 4 & 22 & 1.0000052 \\
+\midrule
+\texttt{gist1m}   & 25\,k  & 0 & 0 & 0  & 1.0000000 \\
+                  & 50\,k  & 0 & 0 & 0  & 1.0000000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three things follow, and the first is that the strong form of the claim is
+false. Every weight ratio exceeds 1, on every configuration and in the only
+direction available, so the $k$-NN half does force a detour somewhere. The
+effect is real.
+
+It is also very small, and confined. Below $\mpts = 16$ the two trees are
+usually not merely similar but identical, with zero differing edges in six of
+the eleven configurations and one differing edge in the rest. The differences
+concentrate at $\mpts = \kmax$, where they reach 1 to 22 edges out of 25{,}000
+to 100{,}000 and 1 to 5 parts per million of total tree weight. On
+\texttt{sift1m} at $n = 25{,}000$ the whole discrepancy is a single substituted
+edge, 18.85 heavier than the one it replaced against a mean merge height of
+281.8.
+
+The concentration at large $\mpts$ is what the definition predicts. At small
+$\mpts$ the core distances in \eqref{eq:mrd} are small, so $\mrd$ is
+approximately the base distance, the cheapest edges are the shortest ones, and
+those are exactly what a $k$-NN graph stores. At $\mpts = \kmax$ the core
+distances are at their largest, and every point within $\coredist^{\kmax}(x)$ of
+$x$ is an equally cheap partner at that same weight; but that ball's boundary is
+the $\kmax$-th stored neighbour, so partners tied at that distance are equally
+cheap and did not fit in the list. \texttt{glove100} shows the effect most
+strongly and is the set with the highest intrinsic dimensionality, where such
+ties are most numerous. We offer this as the reading the pattern supports rather
+than as a verified mechanism, since we did not inspect which edges differ.
+
+The practical consequence is unchanged from what motivated the design. The
+bridges are insurance, they pay out in a narrow band near $\mpts = \kmax$, and
+the flat clusterings cut from the two trees were identical at every threshold we
+applied. Deriving the component labelling costs 0.08 to 3.5\,ms across our data
+sets against 5.3 to 222\,ms of hubness and bridge work, a factor of 48 to 136,
+so testing connectivity first and skipping the bridge computation where the
+graph is already connected costs little and forfeits little.
+
+Where the graph does fragment the picture is entirely different, which is the
+control this ablation needs. On \texttt{manifold\_mid} the $k$-NN half alone
+leaves 150 components at every size tested, so its extracted structure is a
+forest missing 150 of the 25{,}000 to 100{,}000 edges a spanning tree requires,
+and its weight ratio of 0.92 to 0.97 is below 1 only because it is a sum over
+fewer edges. There the bridges are not insurance but the mechanism that produces
+a tree at all.
 
 \textbf{Ambient dimensionality does not predict the threshold.}
 \texttt{20ng\_tfidf} at $d=1000$ connects at $\kmax=4$; \texttt{gist1m} at
@@ -1536,13 +1627,17 @@ are also what places the crossover against cuML at $n \approx 10^5$. Bounding
 them is what would make the cost claim scale-free rather than true above a
 threshold.
 
-\textbf{Is the spanning tree needed on real data at all?} Real $k$-NN graphs are
-already connected at the operating $\kmax$, which suggests that for a large
-class of real data the single-linkage structure is recoverable from the
-neighbourhood graph alone, with the spanning tree required only as a guard.
-Characterising which data requires it, and detecting that cheaply as our
-connectivity check does, would simplify density-based clustering pipelines
-beyond this system.
+\textbf{When can the spanning tree be skipped?} Section~\ref{sec:connectivity}
+narrows this considerably. On connected real data the $k$-NN half alone
+reproduces the exact tree below $\mpts = 16$ and departs from it by 1 to 5 parts
+per million near $\mpts = \kmax$, so the second term of \eqref{eq:coresg} is
+close to redundant over most of the range and not quite redundant at the top of
+it. Two questions remain. Whether that residue is the boundary effect the
+pattern suggests, which inspecting the differing edges would settle, and whether
+a graph can be tested cheaply for the property rather than assumed to have it,
+as the connectivity check already tests for fragmentation. A method that decided
+per data set whether to compute bridges at all, and over which range of $\mpts$,
+would drop the term where it earns nothing while keeping it where it does.
 
 \textbf{Repairing points the stream has passed by.} Recall over arriving points
 is flat across a stream while recall over all points declines and then settles,

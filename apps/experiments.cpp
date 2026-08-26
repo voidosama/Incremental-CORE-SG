@@ -33,6 +33,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <numeric>
 #include <random>
 #include <string>
@@ -65,6 +66,10 @@ public:
         }();
         out_.open(path, std::ios::app);
         if (!out_) throw std::runtime_error("cannot open " + path + " for writing");
+        // A stream's default is 6 significant digits, which rounds a weight
+        // ratio of 1.0000004 to "1" and makes a near-tie read as an identity.
+        // Ten digits distinguishes them and costs a few bytes per row.
+        out_ << std::setprecision(10);
         if (!exists) {
             out_ << "experiment,dataset,n,dim,k,config,value,seed,batch,metric,measurement\n";
         }
@@ -649,11 +654,33 @@ void exp_bridges(const Options& o, const Data& d, Csv* csv) {
         csv->row("bridges", d.name, n, d.dim, o.k, "mode", "antihub", seed, -1,
                  "components_before_repair", double(sa.components_before_repair));
 
+        // The ablation arm: the k-NN half alone, with no bridges and no repair.
+        //
+        // Section~\ref{sec:connectivity} finds that real k-NN graphs are already
+        // connected at the operating kmax, and it is tempting to conclude that
+        // the spanning tree adds nothing on such data. Connectivity does not
+        // establish that. An MST over the complete mutual-reachability graph
+        // may contain a short edge directly between two regions that the k-NN
+        // graph only joins by a long detour around them, which is the situation
+        // the CORE-SG paper illustrates with a horseshoe. The two graphs are
+        // then both connected and induce different hierarchies. Extracting a
+        // tree from this arm and scoring it against the exact one is what tells
+        // the two cases apart.
+        CoreSGParams pn = pa;
+        pn.missing_mode = MissingEdgeMode::None;
+        pn.ensure_connected = false;
+        CoreSG bare(pn);
+        const CoreSGStats sb = bare.build(d.values.data(), n, d.dim);
+        csv->row("bridges", d.name, n, d.dim, o.k, "mode", "knn_only", seed, -1,
+                 "components_before_repair", double(sb.components_before_repair));
+
         for (std::uint32_t mpts : {1u, 2u, 4u, 8u, 16u, o.k}) {
             if (mpts > o.k) continue;
             const MstResult ma = approx.mst(mpts);
             const MstResult me = exact.mst(mpts);
+            const MstResult mb = bare.mst(mpts);
             const MstComparison c = compare_msts(ma, me);
+            const MstComparison cb = compare_msts(mb, me);
             const std::string v = std::to_string(mpts);
 
             csv->row("bridges", d.name, n, d.dim, o.k, "mpts", v, seed, -1, "weight_ratio",
@@ -681,16 +708,48 @@ void exp_bridges(const Options& o, const Data& d, Csv* csv) {
                      double(ka));
             csv->row("bridges", d.name, n, d.dim, o.k, "mpts", v, seed, -1, "clusters_exact",
                      double(ke));
-        }
 
-        // Ablation: does the bridge set matter at all?
-        CoreSGParams pn = pa;
-        pn.missing_mode = MissingEdgeMode::None;
-        pn.ensure_connected = false;
-        CoreSG bare(pn);
-        const CoreSGStats sb = bare.build(d.values.data(), n, d.dim);
-        csv->row("bridges", d.name, n, d.dim, o.k, "mode", "knn_only", seed, -1,
-                 "components_before_repair", double(sb.components_before_repair));
+            // The same three quantities for the k-NN half alone. The component
+            // count is emitted next to them because it decides how the weight
+            // ratio may be read: where this arm is a forest its total weight is
+            // a sum over fewer edges and a ratio below 1 means only that, while
+            // where it is a spanning tree the ratio is a like-for-like
+            // comparison against the exact one.
+            idx_t kb = 0;
+            const std::vector<idx_t> lb =
+                dbscan_labels_from_mst(mb, static_cast<idx_t>(n), thresh, &kb);
+            csv->row("bridges", d.name, n, d.dim, o.k, "mpts", v, seed, -1,
+                     "knnonly_ari_vs_exact", adjusted_rand_index(lb, le));
+            csv->row("bridges", d.name, n, d.dim, o.k, "mpts", v, seed, -1,
+                     "knnonly_weight_ratio", cb.weight_ratio);
+            csv->row("bridges", d.name, n, d.dim, o.k, "mpts", v, seed, -1,
+                     "knnonly_components", double(cb.approx_components));
+            csv->row("bridges", d.name, n, d.dim, o.k, "mpts", v, seed, -1,
+                     "knnonly_clusters", double(kb));
+            // Scored against the anti-hub arm as well, which is the comparison
+            // that says whether the bridges changed the answer this system
+            // actually produces, as opposed to the ideal one.
+            csv->row("bridges", d.name, n, d.dim, o.k, "mpts", v, seed, -1,
+                     "knnonly_ari_vs_antihub", adjusted_rand_index(lb, la));
+            // Emitted because the flat ARI above turned out not to discriminate:
+            // the threshold sits far below the merge heights the bridges affect,
+            // and both arms share every k-NN edge, so they agree on the short
+            // edges by construction. These two compare the trees directly.
+            csv->row("bridges", d.name, n, d.dim, o.k, "mpts", v, seed, -1,
+                     "knnonly_edge_jaccard", cb.edge_jaccard);
+            csv->row("bridges", d.name, n, d.dim, o.k, "mpts", v, seed, -1,
+                     "knnonly_max_weight_gap", cb.max_edge_weight_gap);
+            csv->row("bridges", d.name, n, d.dim, o.k, "mpts", v, seed, -1,
+                     "knnonly_shared_edges", double(cb.shared_edges));
+            csv->row("bridges", d.name, n, d.dim, o.k, "mpts", v, seed, -1,
+                     "exact_mst_edges", double(cb.exact_edges));
+            // Absolute weights, because a maximum profile gap of 0.27 says
+            // nothing without the scale of the merge heights it is a gap in.
+            csv->row("bridges", d.name, n, d.dim, o.k, "mpts", v, seed, -1,
+                     "exact_mst_weight", cb.exact_weight);
+            csv->row("bridges", d.name, n, d.dim, o.k, "mpts", v, seed, -1,
+                     "knnonly_mst_weight", cb.approx_weight);
+        }
 
         // How many anti-hubs are actually needed? This lives here, not in the
         // sensitivity sweep, because it only means anything when the k-NN half
