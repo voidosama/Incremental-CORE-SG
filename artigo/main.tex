@@ -1009,11 +1009,11 @@ graph is already connected costs little and forfeits little.
 
 Where the graph does fragment the picture is entirely different, which is the
 control this ablation needs. On \texttt{manifold\_mid} the $k$-NN half alone
-leaves 150 components at every size tested, so its extracted structure is a
-forest missing 150 of the 25{,}000 to 100{,}000 edges a spanning tree requires,
-and its weight ratio of 0.92 to 0.97 is below 1 only because it is a sum over
-fewer edges. There the bridges are not insurance but the mechanism that produces
-a tree at all.
+leaves 150 components at every size tested, so what it extracts is not a
+spanning tree but a forest 149 edges short of one, differing from the exact tree
+in 149 to 157 edges, and its weight ratio of 0.87 to 0.97 falls below 1 only
+because it sums over fewer edges. There the bridges are not insurance but the
+mechanism that produces a tree at all.
 
 \textbf{Ambient dimensionality does not predict the threshold.}
 \texttt{20ng\_tfidf} at $d=1000$ connects at $\kmax=4$; \texttt{gist1m} at
