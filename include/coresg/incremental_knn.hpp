@@ -53,9 +53,11 @@
 //               point keeps most of its real neighbours;
 //   3. descend/merge/refine -- unchanged.
 //
-// The new batch is split across instances (with `overlap_fraction` sharing) so
-// total instance work is O(|batch|), independent of n_base. Instances stay the
-// unit of device parallelism.
+// The *context* is split across instances; the batch is not. Every instance
+// carries the whole batch, because the batch is its own k-NN problem and an
+// instance holding 1/s of it can only discover 1/s of the intra-batch edges.
+// Total instance work is s*|batch| + |context|, both O(|batch|) and independent
+// of n_base. Instances stay the unit of device parallelism.
 //
 // The seeding search runs on the host and is a read-only pass over the graph:
 // it must complete before anything is inserted, both because the reverse lists
@@ -100,8 +102,9 @@ struct IncrementalKnnParams {
     double sample_fraction = 0.0;
     /// Fraction of extra points mixed into each instance, on top of its own
     /// block. Helps the blocks agree with each other during the merge. Under
-    /// Anchored it shares new points between instances, which is what makes a
-    /// point benefit from more than one view of its region.
+    /// Anchored it sprinkles context points from other blocks into each
+    /// instance, so no block is blind to the regions the others hold. The new
+    /// points are never split, so this does not apply to them.
     double overlap_fraction = 0.05;
 
     // ---- Anchored strategy ------------------------------------------------
