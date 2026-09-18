@@ -112,7 +112,7 @@ struct NearFirst {
     }
 };
 
-/// Greedy beam search for `q` over the nodes below `limit`, ranked with `Op`'s
+/// Beam search for `q` over the nodes below `limit`, ranked with `Op`'s
 /// surrogate. Results land in `sc->best` as (rank, node), unsorted.
 template <class Op>
 void beam_search(const DataView& data, const KnnGraph& g, const ReverseNeighbours* rev, idx_t q,
@@ -156,7 +156,7 @@ void beam_search(const DataView& data, const KnnGraph& g, const ReverseNeighbour
 
     // Entry points. Uniform draws alone are fine on a connected graph and bad
     // on a fragmented one: with 150 separated clusters a random entry starts
-    // in the query's own component about 1/150 of the time, and greedy search
+    // in the query's own component about 1/150 of the time, and the walk
     // cannot cross between them.
     //
     // The hint set (CoreSG passes the selected anti-hubs, which carry a
