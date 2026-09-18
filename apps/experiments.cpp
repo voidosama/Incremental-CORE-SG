@@ -323,6 +323,43 @@ std::vector<float> gather_rows(const Data& d, const std::vector<idx_t>& order, s
 void exp_incremental(const Options& o, const Data& d, Csv* csv, Arrival arrival) {
     const char* name = (arrival == Arrival::Shuffled) ? "incremental" : "arrival_order";
     const char* order_label = (arrival == Arrival::Shuffled) ? "shuffled" : "grouped";
+
+    // Phase breakdown of a *monolithic* build, emitted for both the initial
+    // build and the final rebuild. Without it the only thing recorded about a
+    // build is its total, which cannot answer the question the construction
+    // claim rests on: how much of a build is device parallel. An update's
+    // breakdown has been emitted per batch since the start; a build's has not,
+    // so the two arms could not be compared on the one axis that matters.
+    auto emit_build_phases = [&](const char* prefix, std::size_t n_at, long batch_id,
+                                 std::uint64_t seed, const CoreSGStats& st) {
+        const std::string pre(prefix);
+        auto put = [&](const char* suffix, double value) {
+            csv->row(name, d.name, n_at, d.dim, o.k, "arrival", order_label, seed, batch_id,
+                     pre + suffix, value);
+        };
+        put("_knn_seconds", st.knn_seconds);
+        put("_instance_seconds", st.knn_stats.instance_seconds);
+        put("_stage_seconds", st.knn_stats.stage_seconds);
+        put("_merge_seconds", st.knn_stats.merge_seconds);
+        put("_refine_seconds", st.knn_stats.refine_seconds);
+        put("_hubness_seconds", st.hubness_seconds);
+        put("_missing_seconds", st.missing_seconds);
+        put("_repair_seconds", st.repair_seconds);
+        put("_instances", double(st.knn_stats.instances));
+        put("_jobs_on_device", double(st.knn_stats.jobs_on_device));
+        put("_jobs_on_host", double(st.knn_stats.jobs_on_host));
+        put("_jobs_out_of_memory", double(st.knn_stats.jobs_out_of_memory));
+        put("_largest_instance_nodes", double(st.knn_stats.largest_instance));
+        put("_largest_instance_bytes", double(st.largest_instance_bytes));
+        put("_peak_host_bytes", double(st.peak_host_bytes));
+        // The parallel fraction of this build, on the definition the scaling
+        // experiment already uses: the share of wall clock spent in the one
+        // phase a device queue divides.
+        if (st.total_seconds > 0.0) {
+            put("_parallel_fraction", st.knn_stats.instance_seconds / st.total_seconds);
+        }
+    };
+
     std::printf("\n[%s] %s arrival, %d seeds, %d batches\n", name, order_label, o.seeds,
                 o.batches);
 
@@ -346,6 +383,7 @@ void exp_incremental(const Options& o, const Data& d, Csv* csv, Arrival arrival)
         CoreSGStats bs = sg.build(head.data(), base, d.dim);
         csv->row(name, d.name, base, d.dim, o.k, "arrival", order_label, seed, 0,
                  "build_seconds", bs.total_seconds);
+        emit_build_phases("build", base, 0, seed, bs);
 
         double cumulative = bs.total_seconds;
         std::size_t cursor = base;
@@ -411,6 +449,7 @@ void exp_incremental(const Options& o, const Data& d, Csv* csv, Arrival arrival)
                  "rebuild_seconds", rs.total_seconds);
         csv->row(name, d.name, cursor, d.dim, o.k, "arrival", order_label, seed, -1,
                  "incremental_total_seconds", cumulative);
+        emit_build_phases("rebuild", cursor, -1, seed, rs);
 
         if (can_reference) {
             Dataset present(d.dim, d.metric);
