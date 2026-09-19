@@ -2,7 +2,7 @@
 # Evidence for the construction claim: decomposed, multi-instance CORE-SG
 # construction of a fixed data set.
 #
-# Three things are measured here that no existing sweep records.
+# Four things are measured here that no existing sweep records.
 #
 # STAGE 1 (confirm) -- chunked against monolithic construction, on GPU, with a
 # phase breakdown of BOTH arms. The comparison itself already exists inside
@@ -31,10 +31,16 @@
 # question and answer it only sideways. Its instance axis runs on one GPU, so
 # only the device axis needs the cluster.
 #
+# STAGE 3c (knobs) -- search_ef and refine-iters swept *downward*. Both
+# defaults were set for the streaming path; the phase breakdown puts both on
+# the dominant cost of a build, and neither has ever been tested below its
+# default. Local, one GPU, no cluster needed.
+#
 #   bash scripts/construction.sh            # all three stages
 #   bash scripts/construction.sh confirm    # stage 1 only, ~30-60 min on 4 GPUs
 #   bash scripts/construction.sh scale      # stage 2 only, ~30 min + generation
 #   bash scripts/construction.sh divide     # stage 3 only, ~30 min on one GPU
+#   bash scripts/construction.sh knobs      # stage 3c only, ~40 min on one GPU
 #
 # Every stage appends to results_construction.csv and every stage is safe to
 # re-run: stages 1 and 3b skip a (experiment, dataset) pair already in the CSV,
@@ -273,6 +279,61 @@ if [ "$WHAT" = all ] || [ "$WHAT" = divide ]; then
     echo "  3b: experiment=incremental, dataset=sift1m_k<k>"
     echo "      cumulative_seconds is construction in k pieces,"
     echo "      rebuild_seconds is the same data set built at once (k=1)."
+fi
+
+# ---------------------------------------------------------------------------
+# STAGE 3c -- the two knobs that were never swept downward
+#
+# Both defaults were chosen for the streaming path and never questioned for a
+# build, and the phase breakdown says both sit on the dominant cost.
+#
+# search_ef defaults to 2k = 64. The existing sensitivity sweep went 64, 128,
+# 256, 512 -- upward only, asking whether a wider beam buys recall. Nobody
+# asked what a narrower one costs, and the seeding search is 43 % of a chunk
+# at n = 1M, roughly linear in ef. If 32 holds recall it halves the largest
+# single cost in chunked construction.
+#
+# refine-iters defaults to 5. After the instance blocks merge, a monolithic
+# build runs an unrestricted NN-Descent over every node on the host: 7.1 s of a
+# 13.8 s build at n = 1M, 51 %, and the reason the build's parallel fraction is
+# 0.298 while an update's is 0.93. What that pass repairs is cross-block edges,
+# which is a bounded problem being solved with an unbounded tool. Capping the
+# rounds is the one-flag version of bounding it; if recall survives 2 rounds
+# the build gets materially cheaper and materially more parallel.
+#
+# Recall is sampled, not exhaustive -- an O(n^2) reference does not exist at
+# 500k. Every arm shares one query set (the seed is fixed), so the arms are
+# comparable to each other even though each carries sampling error.
+# ---------------------------------------------------------------------------
+if [ "$WHAT" = all ] || [ "$WHAT" = knobs ]; then
+    echo; echo "### STAGE 3c: search_ef and refine-iters, swept downward"
+
+    # ---- ef: cheaper seeding? ---------------------------------------------
+    # Runs through `strategy` because that is the experiment that isolates an
+    # update, and the seeding search only exists on an update.
+    for EF in 24 32 48 64; do
+        run_exp "sift1m_sweepef${EF}" --data data/sift/sift_base.fvecs --limit 500000 --k 32 --search-ef "$EF" --seeds 2 --batches 8 --gpu 1
+    done
+
+    # ---- refine rounds: cheaper merge repair? ------------------------------
+    for R in 1 2 3 5; do
+        LABEL="refine_sift1m"
+        if [ -f "$OUT" ] && grep -q "^construction,${LABEL},.*,refine_iters,${R}," "$OUT"; then
+            echo "-- $LABEL refine-iters=$R already present, skipping"
+        else
+            echo "-- $LABEL refine-iters=$R"
+            "$CLI" build --data data/sift/sift_base.fvecs --limit 500000 --kmax 32 --instances 8 --gpu 1 --refine-iters "$R" --recall-sample 2000 --csv "$OUT" --name "$LABEL" --config refine_iters --config-value "$R" || echo "!! $LABEL r=$R FAILED (continuing)"
+        fi
+    done
+
+    echo
+    echo "Stage 3c done."
+    echo "  ef:     experiment=strategy, dataset=sift1m_sweepef<ef>"
+    echo "          plot search_seconds and recall_new against ef."
+    echo "          a flat recall curve down to 32 halves the biggest cost."
+    echo "  refine: experiment=construction, dataset=refine_sift1m, config=refine_iters"
+    echo "          plot total_seconds, refine_seconds, parallel_fraction, recall."
+    echo "          r=5 is today's default and the baseline for the others."
 fi
 
 echo; echo "=== construction finished $(date -Is) ==="

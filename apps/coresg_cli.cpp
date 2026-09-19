@@ -209,7 +209,8 @@ void print_stats(const CoreSGStats& s) {
 /// interrupted sweep keeps whatever finished.
 void append_csv(const std::string& path, const std::string& experiment,
                 const std::string& dataset, std::uint32_t dim, std::uint32_t k_max,
-                const std::string& config, const std::string& value, const CoreSGStats& s) {
+                const std::string& config, const std::string& value, const CoreSGStats& s,
+                const RecallResult* recall = nullptr) {
     const bool exists = [&] {
         std::ifstream probe(path);
         return probe.good() && probe.peek() != std::ifstream::traits_type::eof();
@@ -246,6 +247,14 @@ void append_csv(const std::string& path, const std::string& experiment,
     put("components_before_repair", double(s.components_before_repair));
     if (s.total_seconds > 0.0) {
         put("parallel_fraction", g.instance_seconds / s.total_seconds);
+    }
+    // Without this a sweep that trades quality for speed looks like a
+    // free win: every knob below reduces work, and only recall says
+    // whether the graph survived it.
+    if (recall && recall->nodes) {
+        put("recall", recall->recall);
+        put("recall_distance_ratio", recall->distance_ratio);
+        put("recall_queries", double(recall->nodes));
     }
 }
 
@@ -429,12 +438,32 @@ int cmd_build(const Args& a) {
     CoreSGStats st = sg.build(d.values.data(), d.n, d.dim);
     std::printf("build:\n");
     print_stats(st);
+    // Sampled rather than exhaustive: an O(n^2) reference is unusable at
+    // the sizes this command is pointed at, and a sampled mean answers
+    // the same question at O(queries * n * d).
+    RecallResult rec;
+    const std::size_t rq = static_cast<std::size_t>(a.num("recall-sample", 0));
+    if (rq) {
+        std::printf("  measuring recall over %zu sampled queries...\n", rq);
+        rec = sampled_recall(sg.data(), sg.knn(), p.k_max, rq, p.seed, sg.pool());
+        std::printf("  recall            : %.4f over %zu queries\n", rec.recall,
+                    rec.nodes);
+    }
     const std::string csv = a.str("csv");
     if (!csv.empty()) {
         const std::string label = a.str("name").empty() ? std::string("build")
                                                         : a.str("name");
-        append_csv(csv, "construction", label, d.dim, p.k_max, "instances",
-                   std::to_string(p.incr.instances), st);
+        // Which knob this run varied. Defaults to the instance count,
+        // because that is the axis the decomposition claim is made on;
+        // a sweep over any other knob says so here rather than smuggling
+        // the value into the data set name.
+        const std::string cfg = a.str("config").empty() ? std::string("instances")
+                                                        : a.str("config");
+        const std::string cval = a.str("config-value").empty()
+                                     ? std::to_string(p.incr.instances)
+                                     : a.str("config-value");
+        append_csv(csv, "construction", label, d.dim, p.k_max, cfg, cval, st,
+                   rq ? &rec : nullptr);
         std::printf("appended %s\n", csv.c_str());
     }
     const std::string out = a.str("out");
@@ -465,8 +494,12 @@ int cmd_update(const Args& a) {
     if (!csv.empty()) {
         const std::string label = a.str("name").empty() ? std::string("update")
                                                         : a.str("name");
-        append_csv(csv, "construction_update", label, d.dim, p.k_max,
-                   "instances", std::to_string(p.incr.instances), st);
+        const std::string cfg = a.str("config").empty() ? std::string("instances")
+                                                        : a.str("config");
+        const std::string cval = a.str("config-value").empty()
+                                     ? std::to_string(p.incr.instances)
+                                     : a.str("config-value");
+        append_csv(csv, "construction_update", label, d.dim, p.k_max, cfg, cval, st);
         std::printf("appended %s\n", csv.c_str());
     }
 
@@ -556,7 +589,7 @@ void usage() {
         "  coresg_cli extract --in FILE [--mpts 2,4,8] [--out-prefix P]\n"
         "  coresg_cli demo    [--n N] [--dim D] [--batches B]\n\n"
         "common options:\n"
-        "  --metric l2|cosine|l1     --missing antihub|exact|none\n  --csv FILE --name LABEL   append this run to FILE (long format)\n"
+        "  --metric l2|cosine|l1     --missing antihub|exact|none\n  --csv FILE --name LABEL   append this run to FILE (long format)\n  --recall-sample Q         sampled k-NN recall over Q queries (build)\n  --config NAME --config-value V   label the swept knob in the CSV\n"
         "  --gpu 0|1                 --devices 0,1,2,3\n"
         "  --threads T               --cpu-slots S\n"
         "  --instances I             --sampling partition|independent\n"

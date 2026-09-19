@@ -2,10 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
+#include <random>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
+#include "coresg/distance.hpp"
 #include "coresg/nndescent.hpp"
 #include "coresg/thread_pool.hpp"
 
@@ -15,6 +19,90 @@ KnnGraph brute_force_graph(const Dataset& data, std::uint32_t k, ThreadPool* poo
     KnnGraph g(static_cast<idx_t>(data.size()), k);
     brute_force_knn(data.view(), data.metric(), &g, pool);
     return g;
+}
+
+RecallResult sampled_recall(const Dataset& data, const KnnGraph& approx, std::uint32_t k,
+                            std::size_t queries, std::uint64_t seed, ThreadPool* pool) {
+    RecallResult r;
+    r.k = k;
+    const std::size_t n = data.size();
+    if (n == 0 || k == 0 || queries == 0) return r;
+
+    // Exhaustive recall is O(n^2 d), which is unusable at the sizes this
+    // project builds at. Scoring a sample of queries against *all* points is
+    // O(q n d) and answers the same question, because recall is a mean over
+    // nodes: sampling the mean costs accuracy in the estimate, not bias. The
+    // standard error at q = 2000 and a recall near 0.98 is under 0.003, which
+    // is finer than any difference the sweeps are looking for.
+    std::vector<idx_t> qs(n);
+    std::iota(qs.begin(), qs.end(), idx_t(0));
+    std::mt19937_64 rng(seed);
+    if (queries < n) {
+        for (std::size_t i = 0; i < queries; ++i) {
+            std::swap(qs[i], qs[i + rng() % (n - i)]);
+        }
+        qs.resize(queries);
+    }
+
+    const std::uint32_t stride = data.stride();
+    std::vector<double> hit(qs.size(), 0.0);
+    std::vector<double> kth_true(qs.size(), 0.0);
+    std::vector<double> kth_approx(qs.size(), 0.0);
+
+    dispatch_metric(data.metric(), [&](auto op) {
+        using Op = decltype(op);
+        auto body = [&](std::size_t t, int) {
+            const idx_t q = qs[t];
+            const float* vq = data.row(q);
+            // Exact top-k over every other point, kept in a max-heap of size k.
+            std::vector<std::pair<float, idx_t>> best;
+            best.reserve(k + 1);
+            for (idx_t u = 0; u < static_cast<idx_t>(n); ++u) {
+                if (u == q) continue;
+                const float d = Op::rank(vq, data.row(u), stride);
+                if (best.size() < k) {
+                    best.emplace_back(d, u);
+                    std::push_heap(best.begin(), best.end());
+                } else if (d < best.front().first) {
+                    std::pop_heap(best.begin(), best.end());
+                    best.back() = {d, u};
+                    std::push_heap(best.begin(), best.end());
+                }
+            }
+            std::sort_heap(best.begin(), best.end());
+
+            std::unordered_set<idx_t> truth;
+            truth.reserve(best.size() * 2);
+            for (const std::pair<float, idx_t>& p : best) truth.insert(p.second);
+
+            const std::uint32_t ca = std::min<std::uint32_t>(k, approx.degree(q));
+            const idx_t* ids = approx.ids(q);
+            std::size_t h = 0;
+            for (std::uint32_t j = 0; j < ca; ++j) {
+                if (truth.count(ids[j])) ++h;
+            }
+            hit[t] = double(h) / double(best.size());
+            kth_true[t] = double(Op::finalize(best.back().first));
+            kth_approx[t] = ca ? double(approx.dists(q)[ca - 1]) : 0.0;
+        };
+        if (pool && pool->size() > 1) {
+            pool->parallel_for(qs.size(), body, 1);
+        } else {
+            for (std::size_t t = 0; t < qs.size(); ++t) body(t, 0);
+        }
+        return 0;
+    });
+
+    double sum_hit = 0.0, sum_true = 0.0, sum_approx = 0.0;
+    for (std::size_t t = 0; t < qs.size(); ++t) {
+        sum_hit += hit[t];
+        sum_true += kth_true[t];
+        sum_approx += kth_approx[t];
+    }
+    r.nodes = qs.size();
+    r.recall = sum_hit / double(qs.size());
+    r.distance_ratio = sum_true > 0.0 ? sum_approx / sum_true : 1.0;
+    return r;
 }
 
 namespace {

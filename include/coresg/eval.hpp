@@ -35,6 +35,14 @@ KnnGraph brute_force_graph(const Dataset& data, std::uint32_t k, ThreadPool* poo
 
 RecallResult knn_recall(const KnnGraph& approx, const KnnGraph& exact, std::uint32_t k);
 
+/// Recall estimated from a sample of `queries` nodes, each scored exactly
+/// against every point. O(queries * n * d) instead of O(n^2 d), which is what
+/// makes it usable at the sizes this project builds at. `queries >= n` is the
+/// exhaustive case. Pass a seed so a sweep compares the same query set.
+RecallResult sampled_recall(const Dataset& data, const KnnGraph& approx, std::uint32_t k,
+                            std::size_t queries, std::uint64_t seed = 4242,
+                            ThreadPool* pool = nullptr);
+
 /// Recall restricted to a node subset (e.g. only the incrementally added
 /// points, which is where the incremental scheme can lose quality).
 RecallResult knn_recall_subset(const KnnGraph& approx, const KnnGraph& exact, std::uint32_t k,
