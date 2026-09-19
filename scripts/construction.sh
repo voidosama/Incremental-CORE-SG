@@ -29,9 +29,9 @@
 #   bash scripts/construction.sh confirm    # stage 1 only, ~30-60 min on 4 GPUs
 #   bash scripts/construction.sh scale      # stage 2 only, ~30 min + generation
 #
-# Stage 1 appends to results_construction.csv and is safe to re-run: a
-# (experiment, dataset) pair already in the CSV is skipped. Stage 2 is
-# log-only; its numbers are the phase line coresg_cli prints.
+# Both stages append to results_construction.csv and both are safe to re-run:
+# stage 1 skips a (experiment, dataset) pair already in the CSV, stage 2 skips
+# a size already recorded. Everything is also echoed to construction.log.
 #
 # Under SLURM, wrap exactly as CLUSTER.md section 5 shows and resubmit on
 # timeout.
@@ -149,6 +149,12 @@ if [ "$WHAT" = all ] || [ "$WHAT" = scale ]; then
     echo
 
     for N in 10000000 20000000 30000000 40000000 50000000; do
+        # Resume check first: generation is minutes and gigabytes, so a
+        # re-run must not pay for a size it already recorded.
+        if done_already construction "scale${N}"; then
+            echo "-- scale${N} already present, skipping"; continue
+        fi
+
         F="data/scale${N}.fvecs"
         if [ ! -f "$F" ]; then
             echo "-- generating $F ($(( N * 132 / 1000000000 )) GB on disk)"
@@ -162,7 +168,7 @@ if [ "$WHAT" = all ] || [ "$WHAT" = scale ]; then
         [ "$INST" -lt 4 ] && INST=4
 
         echo "-- build n=$N, instances=$INST"
-        if "$CLI" build --data "$F" --kmax 32 --instances "$INST" --gpu 1; then
+        if "$CLI" build --data "$F" --kmax 32 --instances "$INST" --gpu 1 --csv "$OUT" --name "scale${N}"; then
             echo "-- n=$N OK"
         else
             echo "!! n=$N FAILED -- this is the ceiling; report the last size that passed"
@@ -171,10 +177,13 @@ if [ "$WHAT" = all ] || [ "$WHAT" = scale ]; then
     done
 
     echo
-    echo "Stage 2 done. Read the '[coresg] build' line for each n:"
-    echo "  knn / hubness / missing / repair split, and the instance share"
-    echo "The largest n that completed is the number for the paper, together"
-    echo "with the per-device instance size that made it fit."
+    echo "Stage 2 done. Rows land in $OUT under experiment=construction,"
+    echo "dataset=scale<N>. The numbers for the paper:"
+    echo "  largest_instance_bytes  -> per-device residency at that n"
+    echo "  jobs_on_device / jobs_out_of_memory -> that it really ran on GPUs"
+    echo "  peak_host_bytes         -> where the 126 GB ceiling actually bites"
+    echo "  parallel_fraction       -> f for a monolithic build at scale"
+    echo "The largest n that completed is the ceiling on this hardware."
 fi
 
 echo; echo "=== construction finished $(date -Is) ==="

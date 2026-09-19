@@ -9,6 +9,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iomanip>
 #include <map>
 #include <sstream>
 #include <string>
@@ -184,6 +186,66 @@ void print_stats(const CoreSGStats& s) {
                     "%.3f | refine %.3f\n",
                     k.instance_seconds, 100.0 * k.instance_seconds / phase, k.merge_seconds,
                     k.refine_seconds);
+    }
+    // The decomposition numbers. Printed because they are what a capacity
+    // claim is made of: how much a single instance needed resident on a
+    // device, and whether every instance really ran on one. A run reporting
+    // only seconds can answer neither question.
+    std::printf("  instances         : %zu (%zu on device, %zu on host, %zu out of memory)\n",
+                k.instances, k.jobs_on_device, k.jobs_on_host, k.jobs_out_of_memory);
+    std::printf("  largest instance  : %zu nodes, %.1f MB on device\n", k.largest_instance,
+                double(s.largest_instance_bytes) / 1e6);
+    std::printf("  peak host memory  : %.2f GB\n", double(s.peak_host_bytes) / 1e9);
+    if (s.total_seconds > 0.0) {
+        const double f = k.instance_seconds / s.total_seconds;
+        std::printf("  parallel fraction : %.3f (4-device ceiling %.2fx)\n", f,
+                    1.0 / ((1.0 - f) + f / 4.0));
+    }
+}
+
+/// Append one run's numbers in the long format coresg_exp already writes, so a
+/// scale sweep lands in a CSV instead of only in a log that has to be read by
+/// hand. The header goes in only when the file is new, and appending means an
+/// interrupted sweep keeps whatever finished.
+void append_csv(const std::string& path, const std::string& experiment,
+                const std::string& dataset, std::uint32_t dim, std::uint32_t k_max,
+                const std::string& config, const std::string& value, const CoreSGStats& s) {
+    const bool exists = [&] {
+        std::ifstream probe(path);
+        return probe.good() && probe.peek() != std::ifstream::traits_type::eof();
+    }();
+    std::ofstream out(path, std::ios::app);
+    if (!out) throw std::runtime_error("cannot open " + path + " for writing");
+    out << std::setprecision(10);
+    if (!exists) {
+        out << "experiment,dataset,n,dim,k,config,value,seed,batch,metric,measurement\n";
+    }
+    const IncrementalKnnStats& g = s.knn_stats;
+    auto put = [&](const char* metric, double v) {
+        out << experiment << ',' << dataset << ',' << s.n << ',' << dim << ',' << k_max << ','
+            << config << ',' << value << ",0,-1," << metric << ',' << v << '\n';
+    };
+    put("total_seconds", s.total_seconds);
+    put("knn_seconds", s.knn_seconds);
+    put("instance_seconds", g.instance_seconds);
+    put("stage_seconds", g.stage_seconds);
+    put("merge_seconds", g.merge_seconds);
+    put("refine_seconds", g.refine_seconds);
+    put("hubness_seconds", s.hubness_seconds);
+    put("missing_seconds", s.missing_seconds);
+    put("repair_seconds", s.repair_seconds);
+    put("instances", double(g.instances));
+    put("jobs_on_device", double(g.jobs_on_device));
+    put("jobs_on_host", double(g.jobs_on_host));
+    put("jobs_out_of_memory", double(g.jobs_out_of_memory));
+    put("largest_instance_nodes", double(g.largest_instance));
+    put("largest_instance_bytes", double(s.largest_instance_bytes));
+    put("peak_host_bytes", double(s.peak_host_bytes));
+    put("knn_edges", double(s.knn_edges));
+    put("antihubs_selected", double(s.antihubs_selected));
+    put("components_before_repair", double(s.components_before_repair));
+    if (s.total_seconds > 0.0) {
+        put("parallel_fraction", g.instance_seconds / s.total_seconds);
     }
 }
 
@@ -367,6 +429,14 @@ int cmd_build(const Args& a) {
     CoreSGStats st = sg.build(d.values.data(), d.n, d.dim);
     std::printf("build:\n");
     print_stats(st);
+    const std::string csv = a.str("csv");
+    if (!csv.empty()) {
+        const std::string label = a.str("name").empty() ? std::string("build")
+                                                        : a.str("name");
+        append_csv(csv, "construction", label, d.dim, p.k_max, "instances",
+                   std::to_string(p.incr.instances), st);
+        std::printf("appended %s\n", csv.c_str());
+    }
     const std::string out = a.str("out");
     if (!out.empty()) {
         sg.save(out);
@@ -391,6 +461,14 @@ int cmd_update(const Args& a) {
     CoreSGStats st = sg.insert(d.values.data(), d.n);
     std::printf("update:\n");
     print_stats(st);
+    const std::string csv = a.str("csv");
+    if (!csv.empty()) {
+        const std::string label = a.str("name").empty() ? std::string("update")
+                                                        : a.str("name");
+        append_csv(csv, "construction_update", label, d.dim, p.k_max,
+                   "instances", std::to_string(p.incr.instances), st);
+        std::printf("appended %s\n", csv.c_str());
+    }
 
     const std::string out = a.str("out", in);
     sg.save(out);
@@ -478,7 +556,7 @@ void usage() {
         "  coresg_cli extract --in FILE [--mpts 2,4,8] [--out-prefix P]\n"
         "  coresg_cli demo    [--n N] [--dim D] [--batches B]\n\n"
         "common options:\n"
-        "  --metric l2|cosine|l1     --missing antihub|exact|none\n"
+        "  --metric l2|cosine|l1     --missing antihub|exact|none\n  --csv FILE --name LABEL   append this run to FILE (long format)\n"
         "  --gpu 0|1                 --devices 0,1,2,3\n"
         "  --threads T               --cpu-slots S\n"
         "  --instances I             --sampling partition|independent\n"
