@@ -2,7 +2,7 @@
 # Evidence for the construction claim: decomposed, multi-instance CORE-SG
 # construction of a fixed data set.
 #
-# Two things are measured here that no existing sweep records.
+# Three things are measured here that no existing sweep records.
 #
 # STAGE 1 (confirm) -- chunked against monolithic construction, on GPU, with a
 # phase breakdown of BOTH arms. The comparison itself already exists inside
@@ -25,13 +25,21 @@
 # chunked one and the rebuild), which roughly doubles peak host memory and
 # would hit the 126 GB limit well before the algorithm does.
 #
-#   bash scripts/construction.sh            # both stages
+# STAGE 3 (divide) -- the decomposition itself, on its own two axes: instances
+# within one build, and pieces of the data set. This is the stage the scope
+# actually rests on; stages 1 and 2 inherited their shape from the streaming
+# question and answer it only sideways. Its instance axis runs on one GPU, so
+# only the device axis needs the cluster.
+#
+#   bash scripts/construction.sh            # all three stages
 #   bash scripts/construction.sh confirm    # stage 1 only, ~30-60 min on 4 GPUs
 #   bash scripts/construction.sh scale      # stage 2 only, ~30 min + generation
+#   bash scripts/construction.sh divide     # stage 3 only, ~30 min on one GPU
 #
-# Both stages append to results_construction.csv and both are safe to re-run:
-# stage 1 skips a (experiment, dataset) pair already in the CSV, stage 2 skips
-# a size already recorded. Everything is also echoed to construction.log.
+# Every stage appends to results_construction.csv and every stage is safe to
+# re-run: stages 1 and 3b skip a (experiment, dataset) pair already in the CSV,
+# stage 2 skips a size already recorded, stage 3a skips a (label, instances)
+# pair. Everything is also echoed to construction.log.
 #
 # Under SLURM, wrap exactly as CLUSTER.md section 5 shows and resubmit on
 # timeout.
@@ -184,6 +192,87 @@ if [ "$WHAT" = all ] || [ "$WHAT" = scale ]; then
     echo "  peak_host_bytes         -> where the 126 GB ceiling actually bites"
     echo "  parallel_fraction       -> f for a monolithic build at scale"
     echo "The largest n that completed is the ceiling on this hardware."
+fi
+
+# ---------------------------------------------------------------------------
+# STAGE 3 -- the decomposition itself
+#
+# Stages 1 and 2 inherited their shape from the streaming question: build on
+# half the data, then add batches, and ask whether each addition beats a
+# rebuild. That is the wrong axis for a construction claim. Decomposing a build
+# is not a speed optimisation and never was -- k pieces pay the fixed per-update
+# costs k times, so a chunked construction costs more wall clock than one
+# monolithic build, by a measured 2.2 times at k=9. What it buys is that no
+# single piece has to fit anywhere. This stage sweeps the two knobs that make
+# that trade, instead of the batch index.
+#
+# 3a -- instances within one build. The primary axis: a monolithic build split
+#   into 1, 2, ... 64 self-contained NN-Descent instances, queued onto whatever
+#   devices exist. The claim is that largest_instance_bytes falls roughly as
+#   1/instances while total time does not rise much, which is what lets a build
+#   that will not fit as one instance fit as sixty-four on the same card.
+#
+#   The instance axis needs no second GPU: with one device the instances queue
+#   onto one slot, and the memory result is the same result. The device axis is
+#   what needs the cluster, so the sweep sizes itself to whatever nvidia-smi
+#   reports and the same invocation does what the hardware allows.
+#
+# 3b -- pieces of the data set. The orthogonal axis, and the one stage 1 got
+#   wrong by fixing base_fraction at 0.5. Building in k pieces means building
+#   on n/k and adding k-1 more of the same size, which the existing flags
+#   already express exactly. k=1 costs nothing extra to measure: rebuild_seconds
+#   is already the monolithic build at the same final n, emitted by every run.
+# ---------------------------------------------------------------------------
+if [ "$WHAT" = all ] || [ "$WHAT" = divide ]; then
+    echo; echo "### STAGE 3: divide and conquer"
+
+    NDEV=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU' || true)
+    [ -z "$NDEV" ] && NDEV=0
+    [ "$NDEV" -lt 1 ] && NDEV=1
+    echo "visible devices: $NDEV (instance axis runs on any count; device axis needs the cluster)"
+
+    # ---- 3a: instances within one monolithic build ------------------------
+    # A row already present is skipped on (label, instances), not on label
+    # alone, because one label covers the whole instance sweep.
+    for SPEC in "sift1m:data/sift/sift_base.fvecs:l2" "glove100:data/glove100.fvecs:cosine"; do
+        DSNAME=${SPEC%%:*}
+        REST=${SPEC#*:}
+        DSFILE=${REST%%:*}
+        DSMETRIC=${REST#*:}
+        [ -f "$DSFILE" ] || { echo "-- $DSFILE missing, skipping $DSNAME"; continue; }
+
+        for G in $(seq 1 "$NDEV"); do
+            DEVLIST=$(seq -s, 0 $((G - 1)))
+            for I in 1 2 4 8 16 32 64; do
+                LABEL="build_${DSNAME}_g${G}"
+                if [ -f "$OUT" ] && grep -q "^construction,${LABEL},.*,instances,${I}," "$OUT"; then
+                    echo "-- $LABEL instances=$I already present, skipping"
+                    continue
+                fi
+                echo "-- $LABEL instances=$I devices=$DEVLIST"
+                "$CLI" build --data "$DSFILE" --limit 500000 --kmax 32 --metric "$DSMETRIC" --instances "$I" --gpu 1 --devices "$DEVLIST" --csv "$OUT" --name "$LABEL" || echo "!! $LABEL i=$I FAILED (continuing)"
+            done
+        done
+    done
+
+    # ---- 3b: k pieces of the data set -------------------------------------
+    # base_fraction = 1/k and batches = k-1 gives k equal pieces. Each run also
+    # emits rebuild_seconds, which is k=1 on the same data and seed, so every
+    # row carries its own baseline.
+    for KSPEC in "2:0.5" "4:0.25" "8:0.125" "16:0.0625" "32:0.03125"; do
+        K=${KSPEC%%:*}
+        BF=${KSPEC#*:}
+        run_exp "sift1m_k${K}" --data data/sift/sift_base.fvecs --limit 500000 --k 32 --base-fraction "$BF" --batches $((K - 1)) --seeds 2 --gpu 1
+    done
+
+    echo
+    echo "Stage 3 done."
+    echo "  3a: experiment=construction, dataset=build_<set>_g<devices>, config=instances"
+    echo "      plot largest_instance_bytes and total_seconds against instances."
+    echo "      jobs_out_of_memory > 0 marks where one instance stopped fitting."
+    echo "  3b: experiment=incremental, dataset=sift1m_k<k>"
+    echo "      cumulative_seconds is construction in k pieces,"
+    echo "      rebuild_seconds is the same data set built at once (k=1)."
 fi
 
 echo; echo "=== construction finished $(date -Is) ==="
