@@ -308,11 +308,19 @@ fi
 if [ "$WHAT" = all ] || [ "$WHAT" = knobs ]; then
     echo; echo "### STAGE 3c: search_ef and refine-iters, swept downward"
 
-    # ---- ef: cheaper seeding? ---------------------------------------------
-    # Runs through `strategy` because that is the experiment that isolates an
-    # update, and the seeding search only exists on an update.
+    # ---- ef: cheaper seeding, and what it costs ---------------------------
+    # n = 100,000 is deliberate and it is the whole point of this arm. A
+    # narrower beam is unconditionally faster, so the only number that decides
+    # anything is what it does to recall -- and exp_incremental computes recall
+    # only where it can afford the exhaustive reference, `d.n <= 200000`. Run
+    # this at 500k and it silently produces timings with no quality column,
+    # which is an argument for whatever is cheapest.
+    #
+    # The search cost per point depends on ef, k and d, none of which move with
+    # n, so the recall-against-ef curve measured here is the one that applies
+    # at scale. Absolute seconds are not; read those from the 500k rows.
     for EF in 24 32 48 64; do
-        run_exp "sift1m_sweepef${EF}" --data data/sift/sift_base.fvecs --limit 500000 --k 32 --search-ef "$EF" --seeds 2 --batches 8 --gpu 1
+        run_exp "sift1m_ef${EF}_n100000" --data data/sift/sift_base.fvecs --limit 100000 --k 32 --search-ef "$EF" --seeds 2 --batches 8 --gpu 1
     done
 
     # ---- refine rounds: cheaper merge repair? ------------------------------
@@ -328,9 +336,9 @@ if [ "$WHAT" = all ] || [ "$WHAT" = knobs ]; then
 
     echo
     echo "Stage 3c done."
-    echo "  ef:     experiment=strategy, dataset=sift1m_sweepef<ef>"
-    echo "          plot search_seconds and recall_new against ef."
-    echo "          a flat recall curve down to 32 halves the biggest cost."
+    echo "  ef:     experiment=incremental, dataset=sift1m_ef<ef>_n100000"
+    echo "          plot recall_new against ef; that is the axis that decides."
+    echo "          search cost is knn_seconds - instance - merge - refine."
     echo "  refine: experiment=construction, dataset=refine_sift1m, config=refine_iters"
     echo "          plot total_seconds, refine_seconds, parallel_fraction, recall."
     echo "          r=5 is today's default and the baseline for the others."
