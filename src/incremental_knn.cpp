@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <numeric>
 #include <random>
 #include <utility>
@@ -228,6 +229,184 @@ bool insert_strategy_from_string(const std::string& s, InsertStrategy* out) {
     if (s == "resample" || s == "uniform") { *out = InsertStrategy::Resample; return true; }
     if (s == "anchored" || s == "search") { *out = InsertStrategy::Anchored; return true; }
     return false;
+}
+
+const char* to_string(BuildRefine r) {
+    switch (r) {
+        case BuildRefine::Global: return "global";
+        case BuildRefine::Dirty: return "dirty";
+        case BuildRefine::Partitioned: return "partitioned";
+    }
+    return "?";
+}
+
+bool build_refine_from_string(const std::string& s, BuildRefine* out) {
+    if (s == "global" || s == "all") { *out = BuildRefine::Global; return true; }
+    if (s == "dirty" || s == "changed") { *out = BuildRefine::Dirty; return true; }
+    if (s == "partitioned" || s == "blocks") { *out = BuildRefine::Partitioned; return true; }
+    return false;
+}
+
+std::vector<IncrementalKnn::Instance> IncrementalKnn::refine_blocks(const KnnGraph& graph, idx_t n,
+                                                                    std::uint32_t blocks,
+                                                                    std::uint64_t seed) const {
+    std::vector<Instance> out;
+    if (n == 0 || blocks == 0) return out;
+    if (blocks == 1) {
+        Instance inst;
+        inst.nodes.resize(n);
+        std::iota(inst.nodes.begin(), inst.nodes.end(), idx_t(0));
+        inst.owned_begin = 0;
+        out.push_back(std::move(inst));
+        return out;
+    }
+
+    // Blocks are grown by a multi-source walk over the graph, not cut from a
+    // random permutation. That is the whole point. A random block of n/s nodes
+    // has almost none of its own neighbours inside it, so its closure is
+    // n/s*(k+1) -- at s=100 and k=32 that is a third of the data set per
+    // block, and s of those is thirty times the work of one global pass. A
+    // block grown along edges is a connected region, so its closure is itself
+    // plus a boundary.
+    //
+    // The seeds move with `seed`, so consecutive rounds cut the graph in
+    // different places and a pair separated by one round's boundary is
+    // interior to the next.
+    std::mt19937_64 rng(seed);
+    std::vector<idx_t> perm(n);
+    std::iota(perm.begin(), perm.end(), idx_t(0));
+    std::shuffle(perm.begin(), perm.end(), rng);
+
+    std::vector<idx_t> owner(n, kInvalidIdx);
+    std::vector<std::vector<idx_t>> frontier(blocks);
+    std::vector<std::vector<idx_t>> next(blocks);
+    std::vector<std::vector<idx_t>> members(blocks);
+    const std::size_t target = (std::size_t(n) + blocks - 1) / blocks;
+
+    for (std::uint32_t b = 0; b < blocks; ++b) {
+        const idx_t s0 = perm[std::size_t(b) * (n / blocks)];
+        if (owner[s0] != kInvalidIdx) continue;
+        owner[s0] = static_cast<idx_t>(b);
+        frontier[b].push_back(s0);
+        members[b].push_back(s0);
+    }
+
+    // Round robin so blocks stay comparable in size; a block that runs out of
+    // frontier simply stops claiming and the leftovers are swept up below.
+    bool progress = true;
+    while (progress) {
+        progress = false;
+        for (std::uint32_t b = 0; b < blocks; ++b) {
+            if (frontier[b].empty() || members[b].size() >= target) continue;
+            next[b].clear();
+            for (idx_t v : frontier[b]) {
+                const idx_t* I = graph.ids(v);
+                const std::uint32_t c = graph.degree(v);
+                for (std::uint32_t j = 0; j < c; ++j) {
+                    const idx_t q = I[j];
+                    if (q >= n || owner[q] != kInvalidIdx) continue;
+                    owner[q] = static_cast<idx_t>(b);
+                    members[b].push_back(q);
+                    next[b].push_back(q);
+                    if (members[b].size() >= target) break;
+                }
+                if (members[b].size() >= target) break;
+            }
+            frontier[b].swap(next[b]);
+            if (!frontier[b].empty()) progress = true;
+        }
+    }
+
+    // Anything the walk never reached -- isolated nodes, or regions cut off
+    // once every block hit its target -- goes to the smallest block.
+    for (idx_t v = 0; v < n; ++v) {
+        if (owner[v] != kInvalidIdx) continue;
+        std::uint32_t best = 0;
+        for (std::uint32_t b = 1; b < blocks; ++b) {
+            if (members[b].size() < members[best].size()) best = b;
+        }
+        owner[v] = static_cast<idx_t>(best);
+        members[best].push_back(v);
+    }
+
+    // Closure: the block plus the neighbours that fell outside it. Those are
+    // context -- they are here so the block's own nodes can be compared
+    // against them, not to be improved themselves -- but they are marked owned
+    // anyway, because stage_job truncates a non-owned node's warm start to
+    // `owned_warm_fraction` of its list. That rule exists for arriving points
+    // with nothing to inherit; applied to a converged node it would throw
+    // away three quarters of what the graph already knows.
+    std::vector<std::uint8_t> mark(n, 0);
+    for (std::uint32_t b = 0; b < blocks; ++b) {
+        if (members[b].empty()) continue;
+        Instance inst;
+        inst.nodes = members[b];
+        for (idx_t v : inst.nodes) mark[v] = 1;
+        const std::size_t core = inst.nodes.size();
+        for (std::size_t t = 0; params_.build_refine_closure && t < core; ++t) {
+            const idx_t v = inst.nodes[t];
+            const idx_t* I = graph.ids(v);
+            const std::uint32_t c = graph.degree(v);
+            for (std::uint32_t j = 0; j < c; ++j) {
+                const idx_t q = I[j];
+                if (q < n && !mark[q]) {
+                    mark[q] = 1;
+                    inst.nodes.push_back(q);
+                }
+            }
+        }
+        for (idx_t v : inst.nodes) mark[v] = 0;
+        inst.owned_begin = 0;
+        out.push_back(std::move(inst));
+    }
+    return out;
+}
+
+std::vector<idx_t> IncrementalKnn::dirty_refinement_set(const KnnGraph& graph,
+                                                        const std::atomic<std::uint8_t>* dirty,
+                                                        idx_t n,
+                                                        IncrementalKnnStats* stats) const {
+    std::vector<idx_t> active;
+    if (!dirty || n == 0) return active;
+
+    std::size_t cap = n;
+    if (params_.build_refine_max_fraction > 0.0 && params_.build_refine_max_fraction < 1.0) {
+        cap = static_cast<std::size_t>(params_.build_refine_max_fraction * double(n));
+    }
+
+    std::vector<std::uint8_t> mark(n, 0);
+    active.reserve(std::min<std::size_t>(cap, n));
+    for (idx_t v = 0; v < n; ++v) {
+        if (dirty[v].load(std::memory_order_relaxed)) {
+            mark[v] = 1;
+            active.push_back(v);
+        }
+    }
+    const std::size_t changed = active.size();
+    if (stats) stats->refine_dirty = changed;
+
+    // A changed list makes its owner's neighbours stale too: their own lists
+    // were scored against a neighbourhood that has since moved. One ring is
+    // the default because it is where the effect is; more is available as a
+    // knob rather than a guess.
+    std::size_t lo = 0;
+    for (std::uint32_t r = 0; r < params_.build_refine_rings && active.size() < cap; ++r) {
+        const std::size_t hi = active.size();
+        for (std::size_t t = lo; t < hi && active.size() < cap; ++t) {
+            const idx_t v = active[t];
+            const idx_t* I = graph.ids(v);
+            const std::uint32_t c = graph.degree(v);
+            for (std::uint32_t j = 0; j < c && active.size() < cap; ++j) {
+                const idx_t q = I[j];
+                if (q < n && !mark[q]) {
+                    mark[q] = 1;
+                    active.push_back(q);
+                }
+            }
+        }
+        lo = hi;
+    }
+    return active;
 }
 
 std::vector<IncrementalKnn::Instance> IncrementalKnn::make_instances(idx_t n_base, idx_t first_new,
@@ -602,7 +781,8 @@ void IncrementalKnn::stage_all(const Dataset& data, const KnnGraph& graph,
 }
 
 std::size_t IncrementalKnn::merge_job(const KnnJob& job, const Instance& inst, idx_t first_new,
-                                      KnnGraph* graph, std::size_t* candidates) const {
+                                      KnnGraph* graph, std::size_t* candidates,
+                                      std::atomic<std::uint8_t>* dirty) const {
     const std::size_t m = inst.nodes.size();
     const unsigned nt = (pool_ && pool_->size() > 1) ? pool_->size() : 1u;
     std::vector<std::size_t> applied(nt, 0);
@@ -622,8 +802,17 @@ std::size_t IncrementalKnn::merge_job(const KnnJob& job, const Instance& inst, i
                 if (!touches_new && !params_.apply_base_base) continue;
                 ++o;
                 // Symmetric: an instance edge improves both endpoints' lists.
-                if (graph->try_insert_mt(gid, gj, D[j], true).inserted) ++a;
-                if (graph->try_insert_mt(gj, gid, D[j], true).inserted) ++a;
+                // Stamping here is what makes a scoped repair possible at all:
+                // this is the only point where "which lists did the merge
+                // actually change" is known, and it costs one relaxed store.
+                if (graph->try_insert_mt(gid, gj, D[j], true).inserted) {
+                    ++a;
+                    if (dirty) dirty[gid].store(1, std::memory_order_relaxed);
+                }
+                if (graph->try_insert_mt(gj, gid, D[j], true).inserted) {
+                    ++a;
+                    if (dirty) dirty[gj].store(1, std::memory_order_relaxed);
+                }
             }
         }
         applied[slot] += a;
@@ -786,10 +975,17 @@ IncrementalKnnStats IncrementalKnn::build(const Dataset& data, KnnGraph* graph) 
         if (j.out_of_memory) ++st.jobs_out_of_memory;
     }
 
+    const bool track_dirty = params_.build_refine == BuildRefine::Dirty;
+    std::unique_ptr<std::atomic<std::uint8_t>[]> dirty;
+    if (track_dirty) {
+        dirty.reset(new std::atomic<std::uint8_t>[n ? n : 1]);
+        for (idx_t v = 0; v < n; ++v) dirty[v].store(0, std::memory_order_relaxed);
+    }
+
     const auto t_merge = Clock::now();
     for (std::size_t i = 0; i < jobs.size(); ++i) {
         st.applied_edges += merge_job(jobs[i], instances[i], /*first_new=*/0, graph,
-                                      &st.candidate_edges);
+                                      &st.candidate_edges, dirty.get());
         std::vector<float>().swap(jobs[i].vectors);
     }
     st.merge_seconds = since(t_merge);
@@ -797,9 +993,61 @@ IncrementalKnnStats IncrementalKnn::build(const Dataset& data, KnnGraph* graph) 
     const auto t_ref = Clock::now();
     NNDescentParams rp = params_.refine_nnd;
     rp.k = graph->k();
-    st.refine_stats = nndescent(data.view(), data.metric(), graph, rp, pool_);
+    if (params_.build_refine == BuildRefine::Partitioned) {
+        // The repair runs as instances, so it goes through the same device
+        // queue the descent does and its per-device residency is set by the
+        // block count rather than by n.
+        const std::uint32_t blocks = params_.build_refine_blocks
+                                         ? params_.build_refine_blocks
+                                         : (params_.instances ? params_.instances : 1u);
+        const std::uint32_t rounds = params_.build_refine_rounds ? params_.build_refine_rounds : 1u;
+        for (std::uint32_t r = 0; r < rounds; ++r) {
+            std::vector<Instance> blk =
+                refine_blocks(*graph, n, blocks, params_.seed + 7919ull * (r + 1));
+            if (blk.empty()) break;
+            std::vector<KnnJob> rjobs(blk.size());
+            // Staged into its own stats and folded back below: a repair block
+            // is a device job like any other, so if one is larger than the
+            // largest descent instance then *it* sets the per-device bound,
+            // and a capacity claim that ignored it would be wrong.
+            IncrementalKnnStats rst;
+            stage_all(data, *graph, blk, rp, n, &rjobs, &rst);
+            st.largest_instance = std::max(st.largest_instance, rst.largest_instance);
+            st.largest_instance_bytes =
+                std::max(st.largest_instance_bytes, rst.largest_instance_bytes);
+            st.stage_seconds += rst.stage_seconds;
+            {
+                JobScheduler sched(backend_);
+                sched.run_all(&rjobs);
+            }
+            for (std::size_t i = 0; i < rjobs.size(); ++i) {
+                st.applied_edges += merge_job(rjobs[i], blk[i], /*first_new=*/0, graph,
+                                              &st.candidate_edges, nullptr);
+                std::vector<float>().swap(rjobs[i].vectors);
+                st.refine_block_nodes += blk[i].nodes.size();
+                st.refine_largest_block =
+                    std::max(st.refine_largest_block, blk[i].nodes.size());
+            }
+            ++st.refine_rounds_run;
+        }
+        st.refine_nodes = st.refine_block_nodes;
+    } else if (track_dirty) {
+        std::vector<idx_t> active = dirty_refinement_set(*graph, dirty.get(), n, &st);
+        st.refine_nodes = active.size();
+        // Falling back rather than running a scoped pass over almost every
+        // node: below that point the active set is the graph, and the extra
+        // indirection buys nothing.
+        if (active.size() >= std::size_t(n)) {
+            st.refine_stats = nndescent(data.view(), data.metric(), graph, rp, pool_);
+            st.refine_nodes = n;
+        } else {
+            st.refine_stats = nndescent(data.view(), data.metric(), graph, rp, pool_, &active);
+        }
+    } else {
+        st.refine_stats = nndescent(data.view(), data.metric(), graph, rp, pool_);
+        st.refine_nodes = n;
+    }
     st.refine_seconds = since(t_ref);
-    st.refine_nodes = n;
     return st;
 }
 

@@ -138,6 +138,19 @@ CoreSGParams params_from(const Args& a) {
     p.incr.refine_nnd.k = p.k_max;
     p.incr.refine_nnd.sample = p.incr.instance_nnd.sample;
     p.incr.refine_nnd.iters = static_cast<std::uint32_t>(a.num("refine-iters", 5));
+    if (a.has("build-refine")) {
+        if (!build_refine_from_string(a.str("build-refine"), &p.incr.build_refine)) {
+            throw std::runtime_error("bad --build-refine (global|dirty)");
+        }
+    }
+    p.incr.build_refine_rings =
+        static_cast<std::uint32_t>(a.num("build-refine-rings", 1));
+    p.incr.build_refine_max_fraction = a.real("build-refine-max-fraction", 1.0);
+    p.incr.build_refine_blocks =
+        static_cast<std::uint32_t>(a.num("build-refine-blocks", 0));
+    p.incr.build_refine_rounds =
+        static_cast<std::uint32_t>(a.num("build-refine-rounds", 2));
+    p.incr.build_refine_closure = a.flag("build-refine-closure", true);
 
     p.hub.antihub_multiplier = a.real("antihub-multiplier", 1.0);
     p.hub.min_per_component = static_cast<std::size_t>(a.num("min-antihubs-per-component", 2));
@@ -196,6 +209,8 @@ void print_stats(const CoreSGStats& s) {
     std::printf("  largest instance  : %zu nodes, %.1f MB on device\n", k.largest_instance,
                 double(s.largest_instance_bytes) / 1e6);
     std::printf("  peak host memory  : %.2f GB\n", double(s.peak_host_bytes) / 1e9);
+    std::printf("  refine scope      : %zu nodes active, %zu dirty, of %zu\n",
+                k.refine_nodes, k.refine_dirty, s.n);
     // hubness is 22 % of a build at 50M and rising; a single total cannot
     // say whether that is the parallel scoring pass or the serial
     // selection over every node, and the two need different fixes.
@@ -606,7 +621,7 @@ void usage() {
         "  --antihub-multiplier M    --reverse-lists 0|1\n"
         "  --connect 0|1             --brute-force-limit N\n"
         "  --normalization arithmetic|geometric|median\n"
-        "  --refine-max-fraction F   --refine-max-nodes N\n");
+        "  --refine-max-fraction F   --refine-max-nodes N\n  --build-refine global|dirty|partitioned\n  --build-refine-rings N  --build-refine-blocks N  --build-refine-rounds N\n");
 }
 
 }  // namespace

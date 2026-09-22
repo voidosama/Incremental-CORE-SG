@@ -64,6 +64,7 @@
 // it navigates are mutated by the observer and so that the result does not
 // depend on the order new points happen to be processed in.
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -91,6 +92,44 @@ enum class InsertStrategy : std::uint8_t {
 
 const char* to_string(InsertStrategy s);
 bool insert_strategy_from_string(const std::string& s, InsertStrategy* out);
+
+/// How a *build* repairs the damage partitioning does.
+///
+/// A cold build cuts the data into blocks, descends each independently and
+/// merges them. Every pair whose two points landed in different blocks was
+/// never compared, so the merged graph is wrong in a way that is invisible
+/// inside any one block. The repair pass exists for that and nothing else --
+/// with `instances = 1` there is no repair at all, and that configuration is
+/// the fastest one we measure.
+///
+/// Global is what the project shipped: one NN-Descent over every node, on the
+/// host. It is correct and it is 64 % of a 50M build. Cutting its *rounds* was
+/// measured and fails badly -- recall 0.968 at 5 rounds, 0.221 at 1 -- so the
+/// pass is doing real work, not spinning. The two alternatives here cut its
+/// *scope* instead, which is a different thing and untested until now.
+enum class BuildRefine : std::uint8_t {
+    /// NN-Descent over all n. Host only, does not scale with devices.
+    Global = 0,
+    /// Only the nodes the merge actually changed, plus `build_refine_rings`
+    /// rings around them. The merge already knows which those are; it just
+    /// never recorded it. Still host only, but over far fewer nodes.
+    ///
+    /// Measured and it does not work for a cold build: the global graph is
+    /// empty before the merge, so every accepted edge is an insertion and
+    /// every node is dirty. 500,000 of 500,000 on sift1m. Kept because the
+    /// mechanism is right for a path where the graph is already populated,
+    /// and because the stat makes the degeneracy visible rather than
+    /// inviting someone to re-derive it.
+    Dirty = 1,
+    /// Repair as instances instead of one host pass: cut the graph into
+    /// locality-grown blocks, descend each against its own closure on
+    /// whatever device is free, merge, repeat with the cuts moved. This is
+    /// the only variant that makes the repair scale with device count.
+    Partitioned = 2,
+};
+
+const char* to_string(BuildRefine r);
+bool build_refine_from_string(const std::string& s, BuildRefine* out);
 
 struct IncrementalKnnParams {
     /// Number of NN-Descent instances per update. This is the knob that feeds
@@ -154,6 +193,28 @@ struct IncrementalKnnParams {
     NNDescentParams instance_nnd;  ///< per-instance descent (warm started, few rounds)
     NNDescentParams refine_nnd;    ///< restricted refinement after the merge
 
+    /// Build only: how the post-merge repair is scoped. See BuildRefine.
+    BuildRefine build_refine = BuildRefine::Global;
+    /// Dirty mode: rings expanded around the changed nodes. 0 keeps only the
+    /// changed nodes themselves.
+    std::uint32_t build_refine_rings = 1;
+    /// Dirty mode: ceiling on the active set as a fraction of n, so a build
+    /// that dirties almost everything degrades to Global rather than paying
+    /// for the bookkeeping on top of it. 1.0 disables the ceiling.
+    double build_refine_max_fraction = 1.0;
+    /// Partitioned mode: how many blocks the graph is cut into per round.
+    /// 0 uses `instances`. This is the knob that bounds per-device memory
+    /// during the repair, exactly as `instances` does during the descent.
+    std::uint32_t build_refine_blocks = 0;
+    /// Partitioned mode: repair rounds, each with the cuts in different
+    /// places. One round leaves every block boundary unrepaired, which is the
+    /// same failure the repair exists to fix.
+    std::uint32_t build_refine_rounds = 2;
+    /// Partitioned mode: include each block's out-of-block neighbours so the
+    /// descent can compare against them. Off makes a block exactly its own
+    /// members, which is far cheaper but blind to anything outside it.
+    bool build_refine_closure = true;
+
     /// Seed instances from the edges the sampled base points already have.
     bool warm_start = true;
     /// Also push instance-discovered base-base edges into the global graph.
@@ -205,6 +266,10 @@ struct IncrementalKnnStats {
     std::size_t candidate_edges = 0;  ///< directed candidates offered to the merge
     std::size_t applied_edges = 0;    ///< candidates that actually improved a list
     std::size_t refine_nodes = 0;
+    std::size_t refine_dirty = 0;     ///< nodes the merge changed (Dirty mode)
+    std::size_t refine_rounds_run = 0;   ///< Partitioned mode
+    std::size_t refine_block_nodes = 0;  ///< total nodes staged across all rounds
+    std::size_t refine_largest_block = 0;
     std::size_t refine_ring0 = 0;  ///< the new points themselves
     std::size_t refine_ring1 = 0;  ///< their neighbours
     bool refine_capped = false;
@@ -300,8 +365,23 @@ private:
                    const std::vector<Instance>& instances, const NNDescentParams& nnd,
                    idx_t n_total, std::vector<KnnJob>* jobs, IncrementalKnnStats* stats) const;
 
+    /// `dirty`, when given, is stamped for every node whose list the merge
+    /// actually changed -- both endpoints of an accepted edge. That is the
+    /// set the post-merge repair needs and the only place it is cheaply
+    /// knowable, since the merge is where the insertions happen.
     std::size_t merge_job(const KnnJob& job, const Instance& inst, idx_t first_new,
-                          KnnGraph* graph, std::size_t* candidates) const;
+                          KnnGraph* graph, std::size_t* candidates,
+                          std::atomic<std::uint8_t>* dirty = nullptr) const;
+
+    /// Nodes the merge changed, plus `build_refine_rings` rings, capped.
+    std::vector<idx_t> dirty_refinement_set(const KnnGraph& graph,
+                                            const std::atomic<std::uint8_t>* dirty, idx_t n,
+                                            IncrementalKnnStats* stats) const;
+
+    /// Locality-grown blocks plus their closures, for Partitioned repair.
+    /// `seed` moves the cuts between rounds.
+    std::vector<Instance> refine_blocks(const KnnGraph& graph, idx_t n, std::uint32_t blocks,
+                                        std::uint64_t seed) const;
 
     std::vector<idx_t> refinement_set(const KnnGraph& graph, idx_t first_new, idx_t n_total,
                                       IncrementalKnnStats* stats) const;
