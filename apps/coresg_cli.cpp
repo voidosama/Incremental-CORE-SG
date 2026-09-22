@@ -196,6 +196,12 @@ void print_stats(const CoreSGStats& s) {
     std::printf("  largest instance  : %zu nodes, %.1f MB on device\n", k.largest_instance,
                 double(s.largest_instance_bytes) / 1e6);
     std::printf("  peak host memory  : %.2f GB\n", double(s.peak_host_bytes) / 1e9);
+    // hubness is 22 % of a build at 50M and rising; a single total cannot
+    // say whether that is the parallel scoring pass or the serial
+    // selection over every node, and the two need different fixes.
+    std::printf("  hubness split     : score %.3fs | select %.3fs | other %.3fs\n",
+                s.hub_stats.score_seconds, s.hub_stats.select_seconds,
+                s.hubness_seconds - s.hub_stats.score_seconds - s.hub_stats.select_seconds);
     if (s.total_seconds > 0.0) {
         const double f = k.instance_seconds / s.total_seconds;
         std::printf("  parallel fraction : %.3f (4-device ceiling %.2fx)\n", f,

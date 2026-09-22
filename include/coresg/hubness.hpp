@@ -133,6 +133,12 @@ struct HubnessStats {
     double mean_score = 0.0;
     double selection_cutoff = 0.0;
     double seconds = 0.0;
+    /// Split of `seconds`. The two halves have completely different
+    /// shapes -- scoring is a parallel gather over neighbourhoods,
+    /// selection is one nth_element over every node -- so a single total
+    /// cannot say which one to attack.
+    double score_seconds = 0.0;
+    double select_seconds = 0.0;
 };
 
 class HubnessIndex : public GraphObserver, public ReverseNeighbours {

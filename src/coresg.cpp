@@ -283,10 +283,19 @@ CoreSGStats CoreSG::build(const float* rows, std::size_t count, std::uint32_t di
     const auto t_hub = Clock::now();
     hub_.set_params(params_.hub);
     hub_.build(knn_, pool_.get());
+    const double hub_index_s = since(t_hub);
     hub_.set_components(&conn_.labels(), conn_.components());
+    const auto t_edges = Clock::now();
     stats.knn_edges = knn_.undirected_edge_count(pool_.get());
+    const double edge_count_s = since(t_edges);
     stats.hub_stats =
         hub_.rescore_all(knn_, budget_dim(&stats), stats.knn_edges, pool_.get());
+    if (params_.verbose) {
+        std::printf("[coresg]   hubness detail: index %.3fs | edge_count %.3fs | "
+                    "score %.3fs | select %.3fs\n",
+                    hub_index_s, edge_count_s, stats.hub_stats.score_seconds,
+                    stats.hub_stats.select_seconds);
+    }
     hub_.set_track_removals(params_.incremental_connectivity);
     hub_.attach(&knn_);
     stats.hubness_seconds = since(t_hub);

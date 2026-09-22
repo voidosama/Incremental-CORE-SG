@@ -95,15 +95,64 @@ void HubnessIndex::build(const KnnGraph& g, ThreadPool* pool) {
     }
 
     if (rev_enabled_) {
-        // Sequential fill: push_back on n small vectors is memory bound, and
-        // doing it single threaded avoids n locks for a one-off cost.
-        for (idx_t p = 0; p < n_; ++p) {
-            const idx_t* I = g.ids(p);
-            const std::uint32_t c = g.degree(p);
-            for (std::uint32_t j = 0; j < c; ++j) {
-                const idx_t q = I[j];
-                if (q < n_) rev_[q].push_back(p);
+        // Two passes rather than one sequential sweep of push_back. The sizes
+        // are already known -- the loop above put them in rdeg_ -- so every
+        // list can be sized up front and then filled by a parallel scatter
+        // with one atomic cursor per node. No locks, and every write lands in
+        // a slot no other thread can claim.
+        //
+        // The sequential version was 7.96 s of an 8.63 s hubness phase at
+        // n = 4e6, which is 92 % of it, and hubness is 22 % of a build at
+        // 50M. It was never the scoring or the selection: those measure
+        // 0.047 s and 0.054 s at the same size.
+        std::unique_ptr<std::atomic<std::uint32_t>[]> cursor(
+            new std::atomic<std::uint32_t>[n_ ? n_ : 1]);
+        auto size_body = [&](std::size_t lo, std::size_t hi, int) {
+            for (std::size_t i = lo; i < hi; ++i) {
+                const idx_t q = static_cast<idx_t>(i);
+                const std::int32_t d = rdeg_[q].load(std::memory_order_relaxed);
+                rev_[q].assign(d > 0 ? static_cast<std::size_t>(d) : 0u, kInvalidIdx);
+                cursor[q].store(0, std::memory_order_relaxed);
             }
+        };
+        auto fill_body = [&](std::size_t lo, std::size_t hi, int) {
+            for (std::size_t i = lo; i < hi; ++i) {
+                const idx_t p = static_cast<idx_t>(i);
+                const idx_t* I = g.ids(p);
+                const std::uint32_t c = g.degree(p);
+                for (std::uint32_t j = 0; j < c; ++j) {
+                    const idx_t q = I[j];
+                    if (q >= n_) continue;
+                    const std::uint32_t slot =
+                        cursor[q].fetch_add(1, std::memory_order_relaxed);
+                    // Guard rather than assert: rdeg_ and the adjacency are
+                    // read in separate passes, so a mismatch is a dropped
+                    // back-edge, never a write past the end.
+                    if (slot < rev_[q].size()) rev_[q][slot] = p;
+                }
+            }
+        };
+        // The scatter lands entries in whatever order the threads got to
+        // them, where the sequential version produced them ascending. That
+        // matters: beam_search reads only the first `search_reverse_cap` of a
+        // list, so an unsorted list would make which back-edges a query
+        // follows depend on thread scheduling. Sorting restores the old order
+        // exactly, and each list is independent so it parallelises with the
+        // fill.
+        auto sort_body = [&](std::size_t lo, std::size_t hi, int) {
+            for (std::size_t i = lo; i < hi; ++i) {
+                std::vector<idx_t>& r = rev_[i];
+                std::sort(r.begin(), r.end());
+            }
+        };
+        if (pool) {
+            pool->parallel_ranges(n_, size_body);
+            pool->parallel_ranges(n_, fill_body);
+            pool->parallel_ranges(n_, sort_body);
+        } else {
+            size_body(0, n_, 0);
+            fill_body(0, n_, 0);
+            sort_body(0, n_, 0);
         }
     }
 }
@@ -501,7 +550,10 @@ HubnessStats HubnessIndex::rescore_all(const KnnGraph& g, std::uint32_t dim,
 
     std::vector<idx_t> all(n_);
     for (idx_t i = 0; i < n_; ++i) all[i] = i;
+    const auto t_score = std::chrono::steady_clock::now();
     apply_scores(g, all, pool);
+    const double score_s = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - t_score).count();
 
     for (std::size_t s = 0; s < kShards; ++s) {
         ListShard& sh = shards_[s];
@@ -513,7 +565,11 @@ HubnessStats HubnessIndex::rescore_all(const KnnGraph& g, std::uint32_t dim,
     dirty_list_.clear();
     nbr_changed_list_.clear();
 
+    const auto t_sel = std::chrono::steady_clock::now();
     HubnessStats st = select(dim, num_edges, all.size(), pool);
+    st.select_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - t_sel).count();
+    st.score_seconds = score_s;
     st.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     return st;
 }
