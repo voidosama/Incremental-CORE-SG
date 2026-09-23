@@ -101,7 +101,12 @@ for N in 10000000 20000000 30000000 40000000 50000000; do
     fi
     INST=$(( N / 500000 ))
     [ "$INST" -lt 4 ] && INST=4
-    run_build "scale${N}" instances "$INST" --data "$F" --kmax 32 --instances "$INST" --gpu 1
+    # Recall as well as seconds. Without it the claim is that a 50M graph can
+    # be built, with no statement that the result is any good -- the first
+    # thing a reader will ask. Sampled, so it costs O(q*n*d) instead of the
+    # O(n^2 d) an exact reference needs: a few minutes at 50M against a
+    # build of roughly eighteen.
+    run_build "scale${N}" instances "$INST" --data "$F" --kmax 32 --instances "$INST" --gpu 1 --recall-sample 2000
 done
 
 # --- 1.2 instances against devices -----------------------------------------
@@ -132,14 +137,29 @@ done
 # nothing ever failed and the claim rested on arithmetic. Here the instance
 # count is pinned low and n is raised until a device refuses, with the host
 # fallback switched off so the refusal is loud instead of silent.
+# The first version stopped at 10M because that is how large capacity10m is,
+# and nothing failed: at one instance and d=32 a device needs 560 B per
+# point, so 10M is 5.6 GB and an 8 GB card takes it comfortably. The probe
+# ran out of data, not out of memory. The synthetic sets generated in 1.1
+# reach 50M, which is past the ceiling for one or two instances.
+PROBE=data/scale50000000.fvecs
+[ -f "$PROBE" ] || PROBE=data/capacity10m.fvecs
+PROBE_MAX=50000000
+[ "$PROBE" = data/capacity10m.fvecs ] && PROBE_MAX=10000000
+echo; echo "-- oom probe data: $PROBE (up to $PROBE_MAX points)"
 for I in 1 2 4; do
-    for N in 2000000 4000000 6000000 8000000 10000000; do
+    for N in 10000000 15000000 20000000 25000000 30000000 40000000 50000000; do
         LABEL="oomprobe_i${I}"
         if [ -f "$OUT" ] && grep -q "^construction,${LABEL},${N},.*,instances,${I}," "$OUT"; then
             echo "-- $LABEL n=$N present, skipping"; continue
         fi
+        if [ "$N" -gt "$PROBE_MAX" ]; then
+            echo "!! instances=$I never failed within $PROBE -- the ceiling is above"
+            echo "   $PROBE_MAX points; generate a larger set to find it"
+            break
+        fi
         echo; echo "-- oom probe: instances=$I n=$N"
-        if "$CLI" build --data data/capacity10m.fvecs --limit "$N" --kmax 32 \
+        if "$CLI" build --data "$PROBE" --limit "$N" --kmax 32 \
                 --instances "$I" --gpu 1 --oom-fallback 0 \
                 --csv "$OUT" --name "$LABEL" --config instances --config-value "$I"; then
             echo "-- instances=$I n=$N fits"
