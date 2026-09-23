@@ -107,6 +107,11 @@ CoreSGParams params_from(const Args& a) {
         }
     }
     p.backend.cpu_slots = static_cast<unsigned>(a.num("cpu-slots", 1));
+    // Off turns an out-of-memory device into a loud failure instead of a
+    // silent demotion to the host. That is wrong for a normal run and
+    // exactly right for a run whose purpose is to find where a card stops
+    // being able to hold an instance.
+    p.backend.oom_fallback = a.flag("oom-fallback", true);
 
     p.incr.instances = static_cast<std::uint32_t>(a.num("instances", 4));
     if (!insert_strategy_from_string(a.str("strategy", "anchored"), &p.incr.strategy)) {
@@ -611,7 +616,7 @@ void usage() {
         "  coresg_cli demo    [--n N] [--dim D] [--batches B]\n\n"
         "common options:\n"
         "  --metric l2|cosine|l1     --missing antihub|exact|none\n  --csv FILE --name LABEL   append this run to FILE (long format)\n  --recall-sample Q         sampled k-NN recall over Q queries (build)\n  --config NAME --config-value V   label the swept knob in the CSV\n"
-        "  --gpu 0|1                 --devices 0,1,2,3\n"
+        "  --gpu 0|1                 --devices 0,1,2,3\n  --oom-fallback 0          fail loudly instead of finishing on the host\n"
         "  --threads T               --cpu-slots S\n"
         "  --instances I             --sampling partition|independent\n"
         "  --strategy anchored|resample   (anchored = O(batch) updates)\n"
