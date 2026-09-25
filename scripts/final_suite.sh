@@ -17,6 +17,7 @@
 #   bash scripts/final_suite.sh          # everything, in order
 #   bash scripts/final_suite.sh 1        # tier 1 only
 #   bash scripts/final_suite.sh 2        # tiers 1-2
+#   bash scripts/final_suite.sh overlap  # the 1.4 sweep alone, ~25 min on 4 GPUs
 #
 # Appends to results_final.csv and skips any (experiment, dataset) pair already
 # there, so re-running after an interruption resumes rather than repeats.
@@ -28,6 +29,12 @@ cd "$(dirname "$0")/.."
 OUT=results_final.csv
 LOG=final_suite.log
 TIER=${1:-3}
+# A numeric argument selects tiers 1..N. A word selects one named block and
+# nothing else, so a sweep added after a full run can be fired on its own.
+case "$TIER" in
+    ""|*[!0-9]*) TARGET="$TIER"; TIER=0 ;;
+    *) TARGET=all ;;
+esac
 
 pick() {
     local b=$1
@@ -84,95 +91,142 @@ nvidia-smi || true
 # ===========================================================================
 echo; echo "############ TIER 1 ############"
 
-# --- 1.1 the scale ceiling -------------------------------------------------
-# The headline. Per-device residency stayed at 293 MB from 10M to 50M because
-# the instance count rises with n; that is the claim in one table. Generation
-# is minutes and gigabytes, so the resume check comes before it.
-for N in 10000000 20000000 30000000 40000000 50000000; do
-    if have construction "scale${N}"; then
-        echo "-- scale${N} present, skipping"; continue
-    fi
-    F="data/scale${N}.fvecs"
-    if [ ! -f "$F" ]; then
-        echo "-- generating $F (~$(( N * 132 / 1000000000 )) GB)"
-        "$PY" scripts/prepare_datasets.py synthetic --n "$N" --dim 32 --intrinsic 8 \
-            --clusters 200 --separation 6 --out "$F" \
-            || { echo "!! generation failed at $N, stopping the sweep here"; break; }
-    fi
-    INST=$(( N / 500000 ))
-    [ "$INST" -lt 4 ] && INST=4
-    # Recall as well as seconds. Without it the claim is that a 50M graph can
-    # be built, with no statement that the result is any good -- the first
-    # thing a reader will ask. Sampled, so it costs O(q*n*d) instead of the
-    # O(n^2 d) an exact reference needs: a few minutes at 50M against a
-    # build of roughly eighteen.
-    run_build "scale${N}" instances "$INST" --data "$F" --kmax 32 --instances "$INST" --gpu 1 --recall-sample 2000
-done
-
-# --- 1.2 instances against devices -----------------------------------------
-# The mechanism. largest_instance_bytes against instance count is the memory
-# claim; instance_seconds against device count is the scaling claim. Both
-# datasets, every device count the node has.
 NDEV=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU' || true)
 [ -z "$NDEV" ] && NDEV=0
 [ "$NDEV" -lt 1 ] && NDEV=1
 echo; echo "visible devices: $NDEV"
 
-for SPEC in "sift1m:data/sift/sift_base.fvecs:l2" "glove100:data/glove100.fvecs:cosine"; do
-    NAME=${SPEC%%:*}; REST=${SPEC#*:}; FILE=${REST%%:*}; MET=${REST#*:}
-    [ -f "$FILE" ] || { echo "-- $FILE missing, skipping $NAME"; continue; }
-    for G in $(seq 1 "$NDEV"); do
-        DEVS=$(seq -s, 0 $((G - 1)))
-        for I in 1 2 4 8 16 32 64; do
-            run_build "build_${NAME}_g${G}" instances "$I" --data "$FILE" --limit 500000 \
-                --kmax 32 --metric "$MET" --instances "$I" --gpu 1 --devices "$DEVS" \
-                --recall-sample 2000
+if [ "$TIER" -ge 1 ]; then
+    # --- 1.1 the scale ceiling -------------------------------------------------
+    # The headline. Per-device residency stayed at 293 MB from 10M to 50M because
+    # the instance count rises with n; that is the claim in one table. Generation
+    # is minutes and gigabytes, so the resume check comes before it.
+    for N in 10000000 20000000 30000000 40000000 50000000; do
+        if have construction "scale${N}"; then
+            echo "-- scale${N} present, skipping"; continue
+        fi
+        F="data/scale${N}.fvecs"
+        if [ ! -f "$F" ]; then
+            echo "-- generating $F (~$(( N * 132 / 1000000000 )) GB)"
+            "$PY" scripts/prepare_datasets.py synthetic --n "$N" --dim 32 --intrinsic 8 \
+                --clusters 200 --separation 6 --out "$F" \
+                || { echo "!! generation failed at $N, stopping the sweep here"; break; }
+        fi
+        INST=$(( N / 500000 ))
+        [ "$INST" -lt 4 ] && INST=4
+        # Recall as well as seconds. Without it the claim is that a 50M graph can
+        # be built, with no statement that the result is any good -- the first
+        # thing a reader will ask. Sampled, so it costs O(q*n*d) instead of the
+        # O(n^2 d) an exact reference needs: a few minutes at 50M against a
+        # build of roughly eighteen.
+        run_build "scale${N}" instances "$INST" --data "$F" --kmax 32 --instances "$INST" --gpu 1 --recall-sample 2000
+    done
+
+    # --- 1.2 instances against devices -----------------------------------------
+    # The mechanism. largest_instance_bytes against instance count is the memory
+    # claim; instance_seconds against device count is the scaling claim. Both
+    # datasets, every device count the node has.
+
+    for SPEC in "sift1m:data/sift/sift_base.fvecs:l2" "glove100:data/glove100.fvecs:cosine"; do
+        NAME=${SPEC%%:*}; REST=${SPEC#*:}; FILE=${REST%%:*}; MET=${REST#*:}
+        [ -f "$FILE" ] || { echo "-- $FILE missing, skipping $NAME"; continue; }
+        for G in $(seq 1 "$NDEV"); do
+            DEVS=$(seq -s, 0 $((G - 1)))
+            for I in 1 2 4 8 16 32 64; do
+                run_build "build_${NAME}_g${G}" instances "$I" --data "$FILE" --limit 500000 \
+                    --kmax 32 --metric "$MET" --instances "$I" --gpu 1 --devices "$DEVS" \
+                    --recall-sample 2000
+            done
         done
     done
-done
 
-# --- 1.3 where a single instance stops fitting -----------------------------
-# The claim is that decomposition makes graphs buildable that otherwise would
-# not fit on a card. Every run so far scaled the instance count with n, so
-# nothing ever failed and the claim rested on arithmetic. Here the instance
-# count is pinned low and n is raised until a device refuses, with the host
-# fallback switched off so the refusal is loud instead of silent.
-# The first version stopped at 10M because that is how large capacity10m is,
-# and nothing failed: at one instance and d=32 a device needs 560 B per
-# point, so 10M is 5.6 GB and an 8 GB card takes it comfortably. The probe
-# ran out of data, not out of memory. The synthetic sets generated in 1.1
-# reach 50M, which is past the ceiling for one or two instances.
-PROBE=data/scale50000000.fvecs
-[ -f "$PROBE" ] || PROBE=data/capacity10m.fvecs
-PROBE_MAX=50000000
-[ "$PROBE" = data/capacity10m.fvecs ] && PROBE_MAX=10000000
-echo; echo "-- oom probe data: $PROBE (up to $PROBE_MAX points)"
-for I in 1 2 4; do
-    for N in 10000000 15000000 20000000 25000000 30000000 40000000 50000000; do
-        LABEL="oomprobe_i${I}"
-        if [ -f "$OUT" ] && grep -q "^construction,${LABEL},${N},.*,instances,${I}," "$OUT"; then
-            echo "-- $LABEL n=$N present, skipping"; continue
-        fi
-        if [ "$N" -gt "$PROBE_MAX" ]; then
-            echo "!! instances=$I never failed within $PROBE -- the ceiling is above"
-            echo "   $PROBE_MAX points; generate a larger set to find it"
-            break
-        fi
-        echo; echo "-- oom probe: instances=$I n=$N"
-        if "$CLI" build --data "$PROBE" --limit "$N" --kmax 32 \
-                --instances "$I" --gpu 1 --oom-fallback 0 \
-                --csv "$OUT" --name "$LABEL" --config instances --config-value "$I"; then
-            echo "-- instances=$I n=$N fits"
-        else
-            echo "!! instances=$I n=$N does NOT fit -- this is the number for the paper"
-            break
-        fi
+    # --- 1.3 where a single instance stops fitting -----------------------------
+    # The claim is that decomposition makes graphs buildable that otherwise would
+    # not fit on a card. Every run so far scaled the instance count with n, so
+    # nothing ever failed and the claim rested on arithmetic. Here the instance
+    # count is pinned low and n is raised until a device refuses, with the host
+    # fallback switched off so the refusal is loud instead of silent.
+    # The first version stopped at 10M because that is how large capacity10m is,
+    # and nothing failed: at one instance and d=32 a device needs 560 B per
+    # point, so 10M is 5.6 GB and an 8 GB card takes it comfortably. The probe
+    # ran out of data, not out of memory. The synthetic sets generated in 1.1
+    # reach 50M, which is past the ceiling for one or two instances.
+    PROBE=data/scale50000000.fvecs
+    [ -f "$PROBE" ] || PROBE=data/capacity10m.fvecs
+    PROBE_MAX=50000000
+    [ "$PROBE" = data/capacity10m.fvecs ] && PROBE_MAX=10000000
+    echo; echo "-- oom probe data: $PROBE (up to $PROBE_MAX points)"
+    for I in 1 2 4; do
+        for N in 10000000 15000000 20000000 25000000 30000000 40000000 50000000; do
+            LABEL="oomprobe_i${I}"
+            if [ -f "$OUT" ] && grep -q "^construction,${LABEL},${N},.*,instances,${I}," "$OUT"; then
+                echo "-- $LABEL n=$N present, skipping"; continue
+            fi
+            if [ "$N" -gt "$PROBE_MAX" ]; then
+                echo "!! instances=$I never failed within $PROBE -- the ceiling is above"
+                echo "   $PROBE_MAX points; generate a larger set to find it"
+                break
+            fi
+            echo; echo "-- oom probe: instances=$I n=$N"
+            if "$CLI" build --data "$PROBE" --limit "$N" --kmax 32 \
+                    --instances "$I" --gpu 1 --oom-fallback 0 \
+                    --csv "$OUT" --name "$LABEL" --config instances --config-value "$I"; then
+                echo "-- instances=$I n=$N fits"
+            else
+                echo "!! instances=$I n=$N does NOT fit -- this is the number for the paper"
+                break
+            fi
+        done
     done
-done
 
-# ===========================================================================
-# TIER 2 -- what defends it
-# ===========================================================================
+    # ===========================================================================
+    # TIER 2 -- what defends it
+    # ===========================================================================
+fi
+
+# --- 1.4 overlap against instance count ------------------------------------
+# Instances currently share 5 percent of a block, drawn uniformly. Raising that
+# moves work out of the repair and into the instance phase: at n = 5e5 with
+# eight instances on one GPU, overlap 1.0 takes the repair from 3.94 s to
+# 2.72 s and the device-parallel fraction from 0.306 to 0.534. The instance
+# phase grows by more than the repair shrinks, so on one device the total gets
+# worse; the question this sweep answers is what happens when that phase is
+# divided across four.
+#
+# The second question is the frontier. Doubling the instance count alongside
+# the overlap lands at the same per-device residency with higher recall --
+# 28.9 MB at 0.9673 against 30.9 MB at 0.9600, and 14.6 MB at 0.9638 against
+# 15.5 MB at 0.9498, both measured on one GPU. Those pairs are what decides
+# whether overlap is an option or a better default.
+if [ "$TIER" -ge 1 ] || [ "$TARGET" = overlap ]; then
+    echo; echo "### 1.4 overlap sweep"
+    for G in $(seq 1 "$NDEV"); do
+        DEVS=$(seq -s, 0 $((G - 1)))
+        for O in 0.05 0.5 1.0; do
+            for I in 8 16 32 64; do
+                run_build "ovl_sift1m_g${G}_o${O}" instances "$I" \
+                    --data data/sift/sift_base.fvecs --limit 500000 --kmax 32 \
+                    --instances "$I" --overlap "$O" --gpu 1 --devices "$DEVS" \
+                    --recall-sample 2000
+            done
+        done
+        # A second data set at the two settings the frontier compares, so the
+        # result is not a property of sift1m alone.
+        for O in 0.05 1.0; do
+            for I in 16 32; do
+                run_build "ovl_glove100_g${G}_o${O}" instances "$I" \
+                    --data data/glove100.fvecs --limit 500000 --kmax 32 --metric cosine \
+                    --instances "$I" --overlap "$O" --gpu 1 --devices "$DEVS" \
+                    --recall-sample 2000
+            done
+        done
+    done
+    echo
+    echo "1.4 done. dataset=ovl_<set>_g<devices>_o<overlap>, config=instances."
+    echo "  Compare at matched largest_instance_bytes across the o0.05 and o1.0"
+    echo "  rows, on recall and on total_seconds."
+fi
+
 [ "$TIER" -ge 2 ] || { echo; echo "=== stopping after tier 1 ==="; exit 0; }
 echo; echo "############ TIER 2 ############"
 
