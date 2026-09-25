@@ -203,17 +203,23 @@ if [ "$TIER" -ge 1 ] || [ "$TARGET" = overlap ]; then
     for G in $(seq 1 "$NDEV"); do
         DEVS=$(seq -s, 0 $((G - 1)))
         for O in 0.05 0.5 1.0; do
-            for I in 8 16 32 64; do
+            # The full instance range, so each overlap yields a complete
+            # memory-against-recall frontier rather than its lower half. At
+            # m=1 there is no partition and therefore no repair, so the row is
+            # identical across overlaps; it is measured under each anyway so
+            # that a single overlap's rows stand on their own.
+            for I in 1 2 4 8 16 32 64; do
                 run_build "ovl_sift1m_g${G}_o${O}" instances "$I" \
                     --data data/sift/sift_base.fvecs --limit 500000 --kmax 32 \
                     --instances "$I" --overlap "$O" --gpu 1 --devices "$DEVS" \
                     --recall-sample 2000
             done
         done
-        # A second data set at the two settings the frontier compares, so the
-        # result is not a property of sift1m alone.
+        # A second data set, at the two overlaps the frontier compares, so the
+        # result is not a property of sift1m alone. glove100 gains the most
+        # from overlap: +0.044 recall at less memory on four devices.
         for O in 0.05 1.0; do
-            for I in 16 32; do
+            for I in 1 2 4 8 16 32 64; do
                 run_build "ovl_glove100_g${G}_o${O}" instances "$I" \
                     --data data/glove100.fvecs --limit 500000 --kmax 32 --metric cosine \
                     --instances "$I" --overlap "$O" --gpu 1 --devices "$DEVS" \
