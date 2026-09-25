@@ -126,6 +126,11 @@ enum class BuildRefine : std::uint8_t {
     /// whatever device is free, merge, repeat with the cuts moved. This is
     /// the only variant that makes the repair scale with device count.
     Partitioned = 2,
+    /// The merge Zhao et al. describe: withhold the rear of every list,
+    /// refill from other blocks, descend on cross-block pairs only, restore
+    /// the rear. Their cost analysis puts a two-block merge at one third of a
+    /// full descent above d = 20, at graph quality within 3 percent.
+    SMerge = 3,
 };
 
 const char* to_string(BuildRefine r);
@@ -210,6 +215,14 @@ struct IncrementalKnnParams {
     /// places. One round leaves every block boundary unrepaired, which is the
     /// same failure the repair exists to fix.
     std::uint32_t build_refine_rounds = 2;
+    /// SMerge mode: the fraction of each list withheld from the descent and
+    /// restored afterwards, as a multiple of k. The reference reports quality
+    /// holding between 1/5 and 1/2.
+    double smerge_keep_fraction = 0.5;
+    /// SMerge mode: candidate scan length during the descent. 0 uses the kept
+    /// prefix, which is the reference behaviour.
+    std::uint32_t smerge_join_prefix = 0;
+
     /// Partitioned mode: include each block's out-of-block neighbours so the
     /// descent can compare against them. Off makes a block exactly its own
     /// members, which is far cheaper but blind to anything outside it.
@@ -377,6 +390,11 @@ private:
     std::vector<idx_t> dirty_refinement_set(const KnnGraph& graph,
                                             const std::atomic<std::uint8_t>* dirty, idx_t n,
                                             IncrementalKnnStats* stats) const;
+
+    /// Withhold, refill, cross-block descend, restore. See BuildRefine::SMerge.
+    void smerge_repair(const Dataset& data, KnnGraph* graph, idx_t n,
+                       const std::vector<idx_t>& block_of, const NNDescentParams& base,
+                       IncrementalKnnStats* st) const;
 
     /// Locality-grown blocks plus their closures, for Partitioned repair.
     /// `seed` moves the cuts between rounds.

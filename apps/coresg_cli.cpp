@@ -156,6 +156,11 @@ CoreSGParams params_from(const Args& a) {
     p.incr.build_refine_rounds =
         static_cast<std::uint32_t>(a.num("build-refine-rounds", 2));
     p.incr.build_refine_closure = a.flag("build-refine-closure", true);
+    p.incr.refine_nnd.join_prefix =
+        static_cast<std::uint32_t>(a.num("join-prefix", 0));
+    p.incr.smerge_keep_fraction = a.real("smerge-keep", 0.5);
+    p.incr.smerge_join_prefix =
+        static_cast<std::uint32_t>(a.num("smerge-join-prefix", 0));
 
     p.hub.antihub_multiplier = a.real("antihub-multiplier", 1.0);
     p.hub.min_per_component = static_cast<std::size_t>(a.num("min-antihubs-per-component", 2));
@@ -626,7 +631,7 @@ void usage() {
         "  --antihub-multiplier M    --reverse-lists 0|1\n"
         "  --connect 0|1             --brute-force-limit N\n"
         "  --normalization arithmetic|geometric|median\n"
-        "  --refine-max-fraction F   --refine-max-nodes N\n  --build-refine global|dirty|partitioned\n  --build-refine-rings N  --build-refine-blocks N  --build-refine-rounds N\n");
+        "  --refine-max-fraction F   --refine-max-nodes N\n  --build-refine global|dirty|partitioned|smerge\n  --smerge-keep F           fraction of each list kept during the descent\n  --join-prefix N           cap the repair candidate scan at N entries\n  --build-refine-rings N  --build-refine-blocks N  --build-refine-rounds N\n");
 }
 
 }  // namespace

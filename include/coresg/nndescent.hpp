@@ -50,6 +50,24 @@ struct NNDescentParams {
     std::uint64_t seed = 42;
     SamplingPolicy policy = SamplingPolicy::Closest;
     bool verbose = false;
+
+    /// Cap the local join's candidate scan to the first `join_prefix` entries
+    /// of a neighbour list. 0 scans the whole list.
+    ///
+    /// A local join is quadratic in the number of candidates it draws, so
+    /// halving the scan quarters the pairs it evaluates. Zhao et al. report
+    /// graph quality holding for kept fractions between k/5 and k/2 when the
+    /// rear of each list is withheld from the merge and restored afterwards.
+    std::uint32_t join_prefix = 0;
+
+    /// Per-node block label. When non-null, a pair whose two endpoints carry
+    /// the same label is skipped.
+    ///
+    /// After a partitioned build every within-block pair has already been
+    /// compared by that block's own descent, so re-evaluating it in the repair
+    /// spends a distance computation on a known answer. Not owned; must
+    /// outlive the call.
+    const idx_t* block_of = nullptr;
 };
 
 struct NNDescentStats {

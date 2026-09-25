@@ -74,7 +74,11 @@ void local_join(const DataView& data, KnnGraph* g, ReverseCache* rev, const NNDe
     {
         SpinLocks& locks = g->locks();
         locks.lock(node);
-        const std::uint32_t cnt = g->degree(node);
+        std::uint32_t cnt = g->degree(node);
+        // Lists are sorted, so a prefix is the closest candidates. The entries
+        // past it stay in the list and remain subject to eviction; they are
+        // only withheld from being drawn as candidates.
+        if (p.join_prefix && p.join_prefix < cnt) cnt = p.join_prefix;
         idx_t* I = g->mutable_ids(node);
         std::uint8_t* F = g->mutable_flags(node);
         if (p.policy == SamplingPolicy::Closest) {
@@ -129,11 +133,13 @@ void local_join(const DataView& data, KnnGraph* g, ReverseCache* rev, const NNDe
         for (std::size_t b = a + 1; b < sc->nnew.size(); ++b) {
             const idx_t u2 = sc->nnew[b];
             if (u2 >= data.n) continue;
+            if (p.block_of && p.block_of[u1] == p.block_of[u2]) continue;
             try_pair<Op>(g, u1, u2, v1, data.row(u2), stride, &sc->evals, &sc->updates);
         }
         for (std::size_t b = 0; b < sc->nold.size(); ++b) {
             const idx_t u2 = sc->nold[b];
             if (u2 >= data.n) continue;
+            if (p.block_of && p.block_of[u1] == p.block_of[u2]) continue;
             try_pair<Op>(g, u1, u2, v1, data.row(u2), stride, &sc->evals, &sc->updates);
         }
     }

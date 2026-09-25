@@ -236,6 +236,7 @@ const char* to_string(BuildRefine r) {
         case BuildRefine::Global: return "global";
         case BuildRefine::Dirty: return "dirty";
         case BuildRefine::Partitioned: return "partitioned";
+        case BuildRefine::SMerge: return "smerge";
     }
     return "?";
 }
@@ -244,7 +245,96 @@ bool build_refine_from_string(const std::string& s, BuildRefine* out) {
     if (s == "global" || s == "all") { *out = BuildRefine::Global; return true; }
     if (s == "dirty" || s == "changed") { *out = BuildRefine::Dirty; return true; }
     if (s == "partitioned" || s == "blocks") { *out = BuildRefine::Partitioned; return true; }
+    if (s == "smerge") { *out = BuildRefine::SMerge; return true; }
     return false;
+}
+
+/// Repair in the shape Zhao et al. give for merging two k-NN graphs: withhold
+/// the rear of every list, refill the freed slots with candidates from other
+/// blocks, descend comparing only pairs that cross a block boundary, then put
+/// the withheld entries back.
+///
+/// Each of the three does something the plain repair does not. The rear is
+/// withheld because a local join is quadratic in the candidates it draws, so a
+/// half-length scan evaluates a quarter of the pairs. The refill is what makes
+/// the cross-block filter have anything to work on: after a partitioned merge
+/// every entry in a list comes from that node's own block, so a filter applied
+/// to the merged graph as it stands would skip every pair. The filter then
+/// spends the descent only on pairs no block has already compared.
+void IncrementalKnn::smerge_repair(const Dataset& data, KnnGraph* graph, idx_t n,
+                                   const std::vector<idx_t>& block_of,
+                                   const NNDescentParams& base,
+                                   IncrementalKnnStats* st) const {
+    const std::uint32_t k = graph->k();
+    std::uint32_t keep = static_cast<std::uint32_t>(params_.smerge_keep_fraction * double(k));
+    if (keep == 0) keep = 1;
+    if (keep >= k) keep = k - 1;
+
+    // --- withhold the rear -------------------------------------------------
+    std::vector<idx_t> rear_id(std::size_t(n) * (k - keep), kInvalidIdx);
+    std::vector<dist_t> rear_d(std::size_t(n) * (k - keep), 0);
+    const std::size_t stride_rear = k - keep;
+    auto cut = [&](std::size_t lo, std::size_t hi, int) {
+        for (std::size_t i = lo; i < hi; ++i) {
+            const idx_t v = static_cast<idx_t>(i);
+            const std::uint32_t c = graph->degree(v);
+            if (c <= keep) continue;
+            const idx_t* I = graph->ids(v);
+            const dist_t* D = graph->dists(v);
+            const std::size_t base_off = std::size_t(v) * stride_rear;
+            for (std::uint32_t j = keep; j < c; ++j) {
+                rear_id[base_off + (j - keep)] = I[j];
+                rear_d[base_off + (j - keep)] = D[j];
+            }
+            graph->count_storage()[v] = keep;
+        }
+    };
+    if (pool_ && pool_->size() > 1) pool_->parallel_ranges(n, cut); else cut(0, n, 0);
+
+    // --- refill from other blocks -----------------------------------------
+    // Uniformly drawn, as in the reference algorithm. A drawn point is offered
+    // to the list rather than written into it, so the slot is filled only when
+    // the candidate belongs there.
+    const std::uint32_t want = k - keep;
+    auto fill = [&](std::size_t lo, std::size_t hi, int) {
+        std::mt19937_64 rng(params_.seed ^ (0x9E3779B97F4A7C15ull * (lo + 1)));
+        for (std::size_t i = lo; i < hi; ++i) {
+            const idx_t v = static_cast<idx_t>(i);
+            const idx_t mine = block_of[v];
+            std::uint32_t placed = 0, tries = 0;
+            while (placed < want && tries < 8u * want) {
+                ++tries;
+                const idx_t u = static_cast<idx_t>(rng() % n);
+                if (u == v || block_of[u] == mine) continue;
+                const dist_t d = metric_distance(data.metric(), data.row(v), data.row(u),
+                                                 data.stride());
+                if (graph->try_insert_mt(v, u, d, true).inserted) ++placed;
+            }
+        }
+    };
+    if (pool_ && pool_->size() > 1) pool_->parallel_ranges(n, fill); else fill(0, n, 0);
+
+    // --- descend, cross-block pairs only -----------------------------------
+    NNDescentParams rp = base;
+    rp.k = k;
+    rp.join_prefix = params_.smerge_join_prefix ? params_.smerge_join_prefix : keep;
+    rp.block_of = block_of.data();
+    st->refine_stats = nndescent(data.view(), data.metric(), graph, rp, pool_);
+
+    // --- restore the withheld entries --------------------------------------
+    auto restore = [&](std::size_t lo, std::size_t hi, int) {
+        for (std::size_t i = lo; i < hi; ++i) {
+            const idx_t v = static_cast<idx_t>(i);
+            const std::size_t base_off = std::size_t(v) * stride_rear;
+            for (std::size_t j = 0; j < stride_rear; ++j) {
+                const idx_t u = rear_id[base_off + j];
+                if (u == kInvalidIdx) continue;
+                graph->try_insert_mt(v, u, rear_d[base_off + j], false);
+            }
+        }
+    };
+    if (pool_ && pool_->size() > 1) pool_->parallel_ranges(n, restore); else restore(0, n, 0);
+    st->refine_nodes = n;
 }
 
 std::vector<IncrementalKnn::Instance> IncrementalKnn::refine_blocks(const KnnGraph& graph, idx_t n,
@@ -993,7 +1083,18 @@ IncrementalKnnStats IncrementalKnn::build(const Dataset& data, KnnGraph* graph) 
     const auto t_ref = Clock::now();
     NNDescentParams rp = params_.refine_nnd;
     rp.k = graph->k();
-    if (params_.build_refine == BuildRefine::Partitioned) {
+    if (params_.build_refine == BuildRefine::SMerge) {
+        // Which block each point was descended in. Instances are disjoint at
+        // build time, so this is exactly the partition, and it is the label
+        // the cross-block filter reads.
+        std::vector<idx_t> block_of(n, 0);
+        for (std::size_t b = 0; b < instances.size(); ++b) {
+            for (idx_t v : instances[b].nodes) {
+                if (v < n) block_of[v] = static_cast<idx_t>(b);
+            }
+        }
+        smerge_repair(data, graph, n, block_of, rp, &st);
+    } else if (params_.build_refine == BuildRefine::Partitioned) {
         // The repair runs as instances, so it goes through the same device
         // queue the descent does and its per-device residency is set by the
         // block count rather than by n.
