@@ -7,10 +7,10 @@
 %
 % All figures are pgfplots/TikZ, so there are no external image dependencies
 % and every plot is editable in place. Numbers come from results_final_v3.csv
-% (9,421 measurements, 4x RTX 2080 SUPER) except for two tables whose runs
-% predate it and are deterministic in the quantity they report: Table 2 and
-% Fig. 2 come from results.csv and results_local.csv respectively. Provenance
-% is stated in Section V-A.
+% and results_final_v4.csv (10,940 measurements, 4x RTX 2080 SUPER) except for
+% two tables whose runs predate them and are deterministic in the quantity they
+% report: Table 2 and Fig. 2 come from results.csv and results_local.csv
+% respectively. Provenance is stated in Section V-A.
 %
 % TODO before submission: search for "TODO".
 % ---------------------------------------------------------------------------
@@ -712,7 +712,7 @@ absolute wall-clock figures are not, and are never pooled across machines.
 
 \subsection{Provenance}
 \label{sec:provenance}
-All figures below derive from 9{,}421 cluster measurements of the method as
+All figures below derive from 10{,}940 cluster measurements of the method as
 described here, over up to 5 seeds, with zero failed runs. Every experiment
 uses multiple seeds because NN-Descent is randomized and its reverse cache is
 deliberately race-tolerant. Experiments holding the $k$-NN graph exact are
@@ -758,6 +758,12 @@ The worst case is a spanning tree 0.024\% heavier than optimal, with DBSCAN*
 ARI exactly 1.0000, for 10.5 to 36 times less work. At full scale,
 \texttt{manifold\_wide} fragments into 271 components and the bridges alone
 reduce that to one.
+
+Connectedness of the extracted tree was checked at sizes the exact reference
+cannot reach. Over the builds of Section~\ref{sec:extract}, every
+$\mathrm{MST}_{\mpts}$ extracted at every $\mpts \le \kmax$ spans all $n$ nodes,
+on \texttt{sift1m} and \texttt{glove100} at $n$ up to $10^6$ and on a synthetic
+set at $10^7$: $n - 1$ edges and exactly one component in all 480 extractions.
 
 \subsection{Real \emph{k}-NN Graphs Are Already Connected}
 \label{sec:connectivity}
@@ -1189,9 +1195,58 @@ On a 32-dimensional data set cuML exhausts an 8\,GB device at $8\times10^6$
 points, where per-device residency for this work at $5\times10^7$ points of the
 same dimensionality is 293.9\,MB (Table~\ref{tab:scale}).
 
-A parameter sweep compounds the difference. One CORE-SG serves every
-$\mpts \le \kmax$, and extracting a spanning tree from it costs 0.02 to 0.41\,s
-over the sizes measured, against one cuML fit per value.
+A parameter sweep compounds the difference, since cuML serves one $\mpts$ per
+fit. Section~\ref{sec:extract} reports what a sweep costs here.
+
+\subsection{The Cost of One Parameter Value}
+\label{sec:extract}
+
+A built CORE-SG answers a query for $\mathrm{MST}_{\mpts}$ by reweighting its
+stored edges with $\mrd^{\mpts}$ and running one MST over them.
+Table~\ref{tab:extract} reports the cost of one such query and of the whole sweep
+over $\mpts \in [1, \kmax]$, against $n$.
+
+\begin{table}[!t]
+\caption{Extraction cost on one device, $\kmax = 32$. \emph{edges} is the stored
+undirected edge count of the built graph. \emph{one query} is the mean over
+$\mpts \in [2, 32]$; the first extraction after a build is excluded from it
+because it pays the first touch of the arrays. \emph{all 32} is the measured
+total including that first extraction. Rows are means of 3 seeds, except
+$10^7$, which is one.}
+\label{tab:extract}
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+$n$ & edges & one query & all 32 \\
+\midrule
+$2\times10^5$ & 5.21\,M   & 0.216\,s & 6.92\,s   \\
+$5\times10^5$ & 13.10\,M  & 0.437\,s & 14.15\,s  \\
+$1\times10^6$ & 26.50\,M  & 0.853\,s & 27.60\,s  \\
+$1\times10^7$ & 224.57\,M & 9.57\,s  & 310.83\,s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Cost per stored edge is $3.2$ to $5.0\times10^{-8}$\,s across a 438-fold range of
+edge counts, so the extraction is linear in the $O(n\kmax)$ edges it reads rather
+than in $n$ on its own. \texttt{glove100} at $n = 5\times10^5$ agrees with
+\texttt{sift1m} at the same $n$: 13.58\,M edges against 13.10\,M, and 0.471\,s
+against 0.437\,s.
+
+Within one graph the cost falls as $\mpts$ rises. At $n = 10^6$ it is 1.060\,s at
+$\mpts = 2$ and 0.791\,s at $\mpts = 32$, a decline of 25\%. The most expensive
+query is the smallest $\mpts$.
+
+The whole sweep costs 1.08 to 1.72 times the build that produced the graph, on
+the same run and the same device. Against a complete-graph construction per
+value, measured at the one size where that reference is affordable, the sweep is
+161 to 167 times cheaper: 0.82\,s against 134\,s at $n = 2\times10^4$, where the
+reference is extrapolated from 3 of the 32 exact spanning trees.
+
+Set beside Table~\ref{tab:cuml}, one cuML fit at $n = 10^6$ is 180.03\,s and one
+extraction from an existing CORE-SG at that size is 0.853\,s. A sweep of 32
+values is 32 fits for cuML and one build plus 27.60\,s here.
 
 \subsection{Backend Agreement}
 \label{sec:parity}
@@ -1235,7 +1290,9 @@ $5\times10^7$-point graph is built in 18.2 minutes at 0.997 recall. A
 single-instance build of the same data requires 28.0\,GB on the device. Against
 cuML on the same accelerator, construction is 4.53 to 10.01 times faster from
 $5\times10^5$ to $10^6$ points, and cuML exhausts an 8\,GB device at
-$8\times10^6$ points of 32 dimensions.
+$8\times10^6$ points of 32 dimensions. Once built, the graph answers one
+$\mpts$ in 0.853\,s at $10^6$ points against 180.03\,s for one cuML fit, and the
+whole sweep over 32 values in 1.08 to 1.72 times the build.
 
 Instance overlap sets how much of the work falls on the devices rather than the
 host. Doubling the instance count alongside the overlap holds per-device
