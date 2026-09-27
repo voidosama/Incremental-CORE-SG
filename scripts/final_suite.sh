@@ -26,8 +26,11 @@
 set -u -o pipefail
 
 cd "$(dirname "$0")/.."
-OUT=results_final.csv
-LOG=final_suite.log
+# Overridable so a sweep added after a full run can be appended straight into
+# the file that run produced, instead of landing in a second file that then has
+# to be merged by hand:  OUT=results_final_v4.csv bash scripts/final_suite.sh extract
+OUT=${OUT:-results_final.csv}
+LOG=${LOG:-final_suite.log}
 TIER=${1:-3}
 # A numeric argument selects tiers 1..N. A word selects one named block and
 # nothing else, so a sweep added after a full run can be fired on its own.
@@ -231,6 +234,55 @@ if [ "$TIER" -ge 1 ] || [ "$TARGET" = overlap ]; then
     echo "1.4 done. dataset=ovl_<set>_g<devices>_o<overlap>, config=instances."
     echo "  Compare at matched largest_instance_bytes across the o0.05 and o1.0"
     echo "  rows, on recall and on total_seconds."
+fi
+
+# --- 2.0 what one mpts query costs -----------------------------------------
+# Sits above the tier gate so it can be fired on its own, the same way 1.4 is.
+#
+# Section V-H claims a CORE-SG serves every mpts below kmax and charges the
+# alternative one full fit per value. The extraction half of that was the one
+# number in the paper with no row behind it in the current results file: the
+# old figure came from the streaming experiment, which is out of scope now.
+#
+# `mpts` now times each extraction separately instead of only the sweep total,
+# so what is reported is the cost of answering one query. At n small enough for
+# an O(n^2 d) spanning tree it also times the complete-graph alternative, which
+# is the only size where the comparison is measured rather than extrapolated
+# from nothing.
+if [ "$TIER" -ge 2 ] || [ "$TARGET" = extract ]; then
+    echo; echo "### 2.0 MST extraction cost"
+
+    # The one size where the naive alternative is affordable. Three exact
+    # spanning trees over 20,000 points at d=128 is the bulk of this run.
+    run_exp mpts sift1m_extract_n20000 --data data/sift/sift_base.fvecs --limit 20000 \
+        --k 32 --seeds 2 --gpu 1 --devices 0
+
+    # The sizes Table 8 uses, on one device, so the extraction and the build it
+    # is charged against come off the same card.
+    for N in 200000 500000 1000000; do
+        run_exp mpts "sift1m_extract_n${N}" --data data/sift/sift_base.fvecs --limit "$N" \
+            --k 32 --seeds 3 --gpu 1 --devices 0
+    done
+
+    # A second data set and a non-Euclidean metric.
+    run_exp mpts glove100_extract_n500000 --data data/glove100.fvecs --limit 500000 \
+        --k 32 --metric cosine --seeds 3 --gpu 1 --devices 0
+
+    # And one at the scale the memory claim reaches, where the stored edge list
+    # is a few hundred million entries. One seed and every device: the build is
+    # minutes and the quantity under test is the query, not the build.
+    if [ -f data/scale10000000.fvecs ]; then
+        run_exp mpts scale10000000_extract --data data/scale10000000.fvecs \
+            --k 32 --seeds 1 --gpu 1 --instances 20
+    fi
+
+    echo
+    echo "2.0 done. experiment=mpts_sweep, dataset=<set>_extract_n<N>."
+    echo "  config=extract_mpts, one row per mpts: seconds, mst_edges, components."
+    echo "  config=phase: build seconds and knn_edges, first_extraction,"
+    echo "  coresg_sweep, sweep_over_build, and at n=20000 the complete-graph"
+    echo "  speedup. Quote the per-query range from extract_mpts, excluding"
+    echo "  mpts=1, which pays the first touch of the arrays."
 fi
 
 [ "$TIER" -ge 2 ] || { echo; echo "=== stopping after tier 1 ==="; exit 0; }

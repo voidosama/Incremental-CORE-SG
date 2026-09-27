@@ -115,6 +115,11 @@ struct Options {
     double base_fraction = 0.5;
     std::size_t exact_limit = 5000;  // ceiling for O(n^2) references
     std::string metric = "l2";
+    /// Instance count for the experiments that build one graph and then query
+    /// it. 0 keeps the harness default. `mpts` needs this: the extraction cost
+    /// is measured at the sizes Section V-H reports, and at those sizes a
+    /// four-instance build does not fit an 8 GB card.
+    std::uint32_t instances = 0;
     bool gpu = true;
     unsigned threads = 0;
     std::string out = "results.csv";
@@ -242,7 +247,7 @@ CoreSGParams base_params(const Options& o, const Data& d, std::uint64_t seed) {
         p.backend.device_ids.push_back(static_cast<int>(id));
     }
     p.backend.oom_fallback = o.oom_fallback;
-    p.incr.instances = 4;
+    p.incr.instances = o.instances ? o.instances : 4;
     p.incr.min_base_for_split = 2000;
     p.incr.strategy = o.strategy;
     if (o.search_ef) p.incr.search_ef = o.search_ef;
@@ -1062,8 +1067,14 @@ void exp_budget_dimension(const Options& o, const Data& d, Csv* csv) {
 // ---------------------------------------------------------------------------
 
 void exp_mpts(const Options& o, const Data& d, Csv* csv) {
-    const std::size_t n = std::min(d.n, o.exact_limit * 4);
-    std::printf("\n[mpts] n=%zu, sweeping mpts in [1, %u]\n", n, o.k);
+    // n is whatever was loaded, so `--limit` sets it. The cap used to be
+    // `exact_limit * 4` because every run paid for the naive reference below;
+    // that reference is now conditional, which lets the extraction cost be
+    // measured at the sizes the cuML comparison uses.
+    const std::size_t n = d.n;
+    const bool can_reference = n <= o.exact_limit * 4;
+    std::printf("\n[mpts] n=%zu, sweeping mpts in [1, %u]%s\n", n, o.k,
+                can_reference ? "" : " (no complete-graph reference at this n)");
 
     for (int s = 0; s < o.seeds; ++s) {
         const std::uint64_t seed = 3000 + s;
@@ -1071,18 +1082,46 @@ void exp_mpts(const Options& o, const Data& d, Csv* csv) {
         const CoreSGStats st = sg.build(d.values.data(), n, d.dim);
         csv->row("mpts_sweep", d.name, n, d.dim, o.k, "phase", "build", seed, -1, "seconds",
                  st.total_seconds);
+        // The extraction reweights the stored edges, so its cost is driven by
+        // how many there are rather than by n on its own.
+        csv->row("mpts_sweep", d.name, n, d.dim, o.k, "phase", "build", seed, -1, "knn_edges",
+                 double(st.knn_edges));
 
         std::vector<std::uint32_t> values;
         for (std::uint32_t m = 1; m <= o.k; ++m) values.push_back(m);
 
-        const auto t0 = Clock::now();
-        for (std::uint32_t m : values) sg.mst(m);
-        const double sweep = since(t0);
+        // One row per mpts, so the reported cost is the cost of answering one
+        // query rather than a sweep total divided by kmax. The first extraction
+        // after a build touches these arrays for the first time, so it carries
+        // page faults the rest do not; it is labelled and kept separate.
+        double sweep = 0.0;
+        for (std::uint32_t m : values) {
+            const auto tm = Clock::now();
+            const MstResult r = sg.mst(m);
+            const double secs = since(tm);
+            sweep += secs;
+            csv->row("mpts_sweep", d.name, n, d.dim, o.k, "extract_mpts",
+                     std::to_string(m), seed, -1, "seconds", secs);
+            csv->row("mpts_sweep", d.name, n, d.dim, o.k, "extract_mpts",
+                     std::to_string(m), seed, -1, "mst_edges", double(r.edges.size()));
+            csv->row("mpts_sweep", d.name, n, d.dim, o.k, "extract_mpts",
+                     std::to_string(m), seed, -1, "components", double(r.num_components));
+            if (m == 1) {
+                csv->row("mpts_sweep", d.name, n, d.dim, o.k, "phase", "first_extraction",
+                         seed, -1, "seconds", secs);
+            }
+        }
         csv->row("mpts_sweep", d.name, n, d.dim, o.k, "phase", "coresg_sweep", seed, -1,
                  "seconds", sweep);
+        // What the sweep costs relative to building the graph once, which is the
+        // quantity that says whether serving a range of mpts is cheap.
+        csv->row("mpts_sweep", d.name, n, d.dim, o.k, "phase", "sweep_over_build", seed, -1,
+                 "ratio", sweep / (st.total_seconds + 1e-12));
+
+        if (!can_reference) continue;
 
         // Extrapolate the naive alternative from a few exact runs; a full
-        // sweep over the complete graph is not affordable at this n.
+        // sweep over the complete graph is not affordable even at this n.
         const std::size_t probe = std::min<std::size_t>(values.size(), 3);
         const auto t1 = Clock::now();
         for (std::size_t i = 0; i < probe; ++i) sg.exact_mst(values[i]);
@@ -1861,6 +1900,7 @@ void usage() {
         "  --k K --metric l2|cosine|l1\n"
         "  --seeds S --batches B --base-fraction F\n"
         "  --exact-limit N          ceiling for the O(n^2) references\n"
+        "  --instances M            instance count for `mpts` (0 = harness default)\n"
         "  --k-sweep 4,8,16,...     k values for `connectivity`\n"
         "  --batch-fractions a,b,c  batch sizes for `batchsize`, as fractions of n\n"
         "  --order-file F --mst-dir D --export-mpts M --seed-base S   (`stream`;\n"
@@ -1889,6 +1929,7 @@ int main(int argc, char** argv) {
         else if (a == "--batches") o.batches = std::atoi(next().c_str());
         else if (a == "--base-fraction") o.base_fraction = std::atof(next().c_str());
         else if (a == "--exact-limit") o.exact_limit = std::strtoull(next().c_str(), nullptr, 10);
+        else if (a == "--instances") o.instances = std::strtoul(next().c_str(), nullptr, 10);
         else if (a == "--gpu") o.gpu = std::atoi(next().c_str()) != 0;
         else if (a == "--scaling-instances") o.scaling_instances = next();
         else if (a == "--k-sweep") o.k_sweep = next();
