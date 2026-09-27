@@ -6,8 +6,11 @@
 % a local build.
 %
 % All figures are pgfplots/TikZ, so there are no external image dependencies
-% and every plot is editable in place. Numbers come from results_final_v2.csv
-% (6,201 measurements, 4x RTX 2080 SUPER); provenance is stated in Section V-A.
+% and every plot is editable in place. Numbers come from results_final_v3.csv
+% (9,421 measurements, 4x RTX 2080 SUPER) except for two tables whose runs
+% predate it and are deterministic in the quantity they report: Table 2 and
+% Fig. 2 come from results.csv and results_local.csv respectively. Provenance
+% is stated in Section V-A.
 %
 % TODO before submission: search for "TODO".
 % ---------------------------------------------------------------------------
@@ -117,7 +120,7 @@ Clustering at Scale}
 
 \begin{abstract}
 
-Density-based clustering methods such as HDBSCAN* rely on a smoothing parameter whose optimal value is unknown in advance. Evaluating multiple candidate values substantially increases computational cost because each evaluation has quadratic complexity. CORE-SG addresses this by combining a k-nearest-neighbor graph (kNNG) with a minimum spanning tree (MST), allowing a single graph to support all smoothing values up to $\kmax$. The original construction is centralized: the graph is built and stored on one device, which bounds the data set size by the memory of that device. We reformulate CORE-SG construction as a set of independent subproblems, called instances, each combining a block of points with its own neighborhood state and referencing no global structure. An instance is scheduled on any available accelerator, and per-device residency is set by the instance count rather than by the number of points. The MST half is replaced by an anti-hub bridge estimate: the edges the neighborhoods cannot supply are those bridging density-separated components, such bridges leave component borders, and borders are identified by the lowest locally normalized reverse degree. The number of spanned nodes depends on dimensionality and edge count rather than on the number of points. Across 14 data sets, raising the instance count from 1 to 64 reduces per-device residency from 472 MB to 7.7 MB, a factor of 61, at a cost of 1.83 times in wall clock on four GPUs. Per-device residency remains at 293 MB as the data set grows from $10^7$ to $5\times10^7$ points, where a $5\times10^7$-point graph is built in 18.2 minutes at 0.997 recall. The estimated spanning trees are at most 0.024\% heavier than the exact ones and produce identical flat clusterings. Against NVIDIA cuML's GPU HDBSCAN* on the same device, construction is 10.0 times faster at $10^6$ points, and cuML exhausts an 8 GB device at $8\times10^6$ points.
+Density-based clustering methods such as HDBSCAN* rely on a smoothing parameter whose appropriate value is not known in advance, and evaluating several candidate values is expensive because each evaluation rests on a quadratic computation. The CORE-SG replacement graph removes the repetition: one graph, the union of a $k$-nearest-neighbor graph and a minimum spanning tree, serves every smoothing value up to a chosen maximum. Its construction is centralized, so the graph is built and stored on a single device and the largest data set that can be processed is bounded by the memory of that device. We reformulate the construction as a set of independent subproblems, called instances. An instance holds a block of points together with its own neighborhood state, references no global structure while it runs, and is scheduled onto any available accelerator without cross-device communication. The memory a device must hold is then set by the number of instances rather than by the number of points, so a larger data set is processed by raising the instance count rather than by acquiring a larger accelerator. Partitioning leaves pairs in separate blocks uncompared; a repair pass over the merged graph recovers them, and an overlap between blocks moves part of that pass from the host onto the devices. The minimum spanning tree is replaced by an anti-hub bridge estimate: the edges the neighborhoods cannot supply are those bridging density-separated components, such bridges leave component borders, and borders are identified by the lowest locally normalized reverse degree. The set spanned is sized by dimensionality and edge count rather than by the number of points. Per-device memory falls in proportion to the instance count and stays constant as the data set grows, the estimated spanning trees yield flat clusterings identical to those of the exact trees, and the construction processes data sets that exhaust the device under a GPU implementation of HDBSCAN*.
 
 \end{abstract}
 
@@ -156,7 +159,10 @@ different reasons and admit different remedies.
       so raising the instance count lowers the memory a single device must hold
       (Section~\ref{sec:knn}). Partitioning leaves pairs in separate blocks
       uncompared, and a repair pass over the merged graph recovers them
-      (Section~\ref{sec:repair}).
+      (Section~\ref{sec:repair}). One parameter, the fraction of points an
+      instance holds beyond its own block, moves work between that pass and the
+      instance phase, and therefore between the host and the devices
+      (Section~\ref{sec:overlap}).
 
 \item \textbf{An anti-hub bridge estimate replacing the MST.} The edges the
       neighborhoods cannot supply are precisely those bridging density-separated
@@ -239,10 +245,18 @@ resident in one address space, which is the property this work relaxes.
 \subsection{Distributed and Incremental Density-Based Clustering}
 
 Closest to our $k$-NN graph is the work of Zhao et al. \cite{knn_merge} on
-merging $k$-NN graphs, which combines independently built graphs over separate
-data sets. Our merge step relies on the same idempotence of top-$k$ insertion;
-the difference is that we partition one data set in order to bound per-device
-memory, and measure what that partition costs.
+merging $k$-NN graphs. They state the fixed-data-set case directly: slice the
+data into blocks, compute an approximate $k$-NN graph for each block on a
+separate machine, and reduce the subgraphs by repeated pairwise merging. Their
+symmetric merge performs that reduction by truncating each neighbor list,
+refilling the freed slots with candidates drawn from the other graph, and
+descending only on pairs that cross the two graphs. Our decomposition is that
+same partition. The differences are that the $m$ subgraphs are merged into the
+global lists in one pass rather than pairwise, that an instance carries an
+overlap sample so the blocks share a reference set, and that the object under
+construction is a CORE-SG rather than a $k$-NN graph alone.
+Section~\ref{sec:repaircost} measures their symmetric merge in place of our
+repair pass.
 
 FISHDBC \cite{fishdbc} maintains a spanning tree fed by candidate edges from a
 hierarchical navigable small world index \cite{hnsw}, and approximates HDBSCAN*
@@ -256,10 +270,10 @@ Regarding distributed construction, batch approaches
 \cite{mrhdbscan} parallelize HDBSCAN* over MapReduce, McInnes and Healy
 \cite{acceleratedhdbscan} accelerate it via spatial indexing, and Gowanlock
 \cite{bpshdbscan} reaches billion-point DBSCAN with a hybrid CPU/GPU scheme.
-None of these maintains a structure under insertion, and none serves a range of
-$\mpts$ from a single graph. General dynamic MST maintenance
-\cite{mst_maintenance} is well studied; we discuss in
-Section~\ref{sec:bridges} why we avoid it.
+Each distributes a clustering at one value of $\mpts$; none produces a
+structure serving a range of $\mpts$. General dynamic MST maintenance
+\cite{mst_maintenance} is well studied; Section~\ref{sec:bridges} states why
+we avoid it.
 
 \subsection{Hubness}
 
@@ -276,7 +290,7 @@ borders, which is where the edges we need originate.
 \label{sec:method}
 % ===========================================================================
 
-Fig.~\ref{fig:pipeline} summarizes the construction pipeline. The data set is processed in four stages. First, the points are partitioned into $m$ instances. Each instance is a self-contained NN-Descent problem over its own block and is executed on any available accelerator. Second, the neighborhoods produced by the instances are merged into the global top-$k$ lists. Because partitioning leaves pairs in separate blocks uncompared, a repair pass over the merged graph follows the merge. Third, the hubness index is computed and the anti-hub candidates are selected; the number of candidates is $\lceil d \ln |E| \rceil$, where $d$ is the ambient dimensionality and $|E|$ is the number of undirected edges in the $k$-NN graph. Fourth, an MST is computed over the selected anti-hubs to obtain candidate bridge edges, and a repair step connects any components that remain disconnected.
+Fig.~\ref{fig:pipeline} summarizes the construction pipeline. The data set is processed in four stages. First, the points are partitioned into $m$ instances. Each instance is a self-contained NN-Descent problem over its own block, plus an overlap sample drawn from the other blocks, and is executed on any available accelerator. Second, the neighborhoods produced by the instances are merged into the global top-$k$ lists. Because partitioning leaves pairs in separate blocks uncompared, a repair pass over the merged graph follows the merge. Third, the hubness index is computed and the anti-hub candidates are selected; the number of candidates is $\lceil d \ln |E| \rceil$, where $d$ is the ambient dimensionality and $|E|$ is the number of undirected edges in the $k$-NN graph. Fourth, an MST is computed over the selected anti-hubs to obtain candidate bridge edges, and a repair step connects any components that remain disconnected.
 
 Once construction is complete, a query for $\mathrm{MST}_{\mpts}$ reweights the union of the $k$-NN edges and bridge edges using $\mrd^{\mpts}$ and extracts an MST from $O(n\kmax)$ edges.
 
@@ -290,7 +304,7 @@ Once construction is complete, a query for $\mathrm{MST}_{\mpts}$ reweights the 
   ar/.style={-{Latex[length=1.4mm]}, thin}
 ]
 \node[wide, fill=black!5] (data) {data set $X$, $|X| = n$};
-\node[wide, below=of data] (part) {partition into $m$ blocks\\{\tiny block $B_i$ carries its own neighborhood state}};
+\node[wide, below=of data] (part) {partition into $m$ blocks\\{\tiny block $B_i$ carries its own neighborhood state and an overlap sample}};
 \node[box, below=of part.south west, anchor=north west] (i1) {instance 1\\{\tiny $B_1$}};
 \node[box, right=2mm of i1] (i2) {instance 2\\{\tiny $B_2$}};
 \node[box, right=2mm of i2] (i3) {instance $m$\\{\tiny $B_m$}};
@@ -346,13 +360,25 @@ device count in Section~\ref{sec:scaling}.
 
 \subsubsection{Instance Constraints}
 
-Two constraints bound the work an instance performs. The descent within an
+Two parameters set the work an instance performs. The descent within an
 instance terminates when a round produces fewer than $\delta k m_i$ updates,
 where $m_i$ is the instance size, which ties the stopping rule to the instance
-rather than to the data set. The overlap sample, a fixed fraction of the block
-size drawn from other blocks, gives the blocks a shared reference set during
-the merge; without it two blocks agree only through nodes they both happen to
-contain.
+rather than to the data set.
+
+The second is the \emph{overlap fraction} $\omega$. An instance holds its own
+block of $n/m$ points and a further $\omega n/m$ points drawn uniformly from
+the remaining blocks, so its size is
+\begin{equation}
+\label{eq:instancesize}
+m_i = (1 + \omega)\,\frac{n}{m},
+\end{equation}
+before duplicate draws are removed. The overlap gives the blocks a shared
+reference set: without it two blocks agree only through nodes they both happen
+to contain, and every pair split across a block boundary is left for the repair
+pass. Raising $\omega$ compares some of those pairs inside the instances
+instead, which enlarges the instance phase and shortens the repair pass. The
+instance phase executes on the devices and the repair pass does not, so $\omega$
+moves work between them. Section~\ref{sec:overlap} measures both effects.
 
 The per-point device cost of an instance is
 \begin{equation}
@@ -360,23 +386,27 @@ The per-point device cost of an instance is
 c = 4\,\mathrm{stride} + 8k + s,
 \end{equation}
 where $\mathrm{stride}$ is the padded vector length, $k$ the neighborhood size
-and $s$ the NN-Descent sample state. An instance of $m_i$ points therefore
-occupies $c\,m_i$ bytes, and the largest instance determines whether a
-configuration fits on a given accelerator. We report this quantity directly in
+and $s$ the NN-Descent sample state. An instance therefore occupies $c\,m_i$
+bytes with $m_i$ from \eqref{eq:instancesize}, and the largest instance
+determines whether a configuration fits on a given accelerator. Doubling $m$
+alongside $\omega$ leaves that product close to unchanged, which is the
+comparison Section~\ref{sec:overlap} makes. We report the quantity directly in
 Section~\ref{sec:memory}.
 
 \subsubsection{Merge and Repair}
 \label{sec:repair}
 
-Instances produce neighborhoods over disjoint blocks. Because the global lists
-are sorted by distance, merging is repeated insertion: each instance offers its
-neighborhoods and each candidate is accepted only if it improves a list.
+Instances produce neighborhoods over blocks that overlap only in their samples,
+so the same node may carry a different list in several instances. Because the
+global lists are sorted by distance, merging is repeated insertion: each instance
+offers its neighborhoods and each candidate is accepted only if it improves a
+list, which makes the result independent of the order the instances complete in.
 
-Partitioning leaves every pair whose two points fell in different blocks
-uncompared, so the merged graph omits neighbors that a single undivided descent
-would have found. A repair pass, a further NN-Descent over the merged graph,
-recovers them. This pass exists solely as a consequence of partitioning: at
-$m = 1$ the descent result is adopted directly and no repair is performed.
+Partitioning leaves every pair whose two points share no instance uncompared, so
+the merged graph omits neighbors that a single undivided descent would have
+found. A repair pass, a further NN-Descent over the merged graph, recovers them.
+This pass exists solely as a consequence of partitioning: at $m = 1$ the descent
+result is adopted directly and no repair is performed.
 
 The repair operates over the whole graph. Its cost and the constraints on its
 scope are examined in Section~\ref{sec:repaircost}.
@@ -558,7 +588,8 @@ decides whether a configuration fits on a given accelerator. The
 \emph{phase-split wall clock} decomposes a build into the staging, the instance
 descent, the merge, the repair pass, the hubness index, the bridge MST and the
 connectivity pass, so that the device-parallel portion can be separated from the
-host remainder; we write $f$ for the instance phase as a fraction of the total.
+host remainder; we write $f$ for the instance phase as a fraction of the
+total, which is the parallel fraction of Amdahl's law \cite{amdahl}.
 
 We deliberately do \emph{not} report edge overlap between spanning trees. All
 MSTs of a graph share a weight multiset, and for any threshold the components of
@@ -571,9 +602,12 @@ tie-break yields a different but equally optimal tree.
 
 \subsection{Data Sets}
 
-Table~\ref{tab:datasets} lists three families, plus a single
-\textbf{capacity} set used only to probe per-device memory at $10^7$ points.
-\textbf{Real-paper} sets
+Table~\ref{tab:datasets} lists three families, plus a \textbf{scale} family
+used only in Section~\ref{sec:scale} and in the single-instance capacity probe.
+The scale sets are synthetic, generated at $d = 32$ with intrinsic
+dimensionality 8, 200 clusters and a fixed separation, at sizes from $10^7$ to
+$5\times10^7$ points; they exist because no public data set we had access to
+reaches those sizes. \textbf{Real-paper} sets
 reproduce the recipes of \cite{coresg} for comparability, using FMA \cite{fma}
 and 20 Newsgroups \cite{newsgroups}. \textbf{Real-scale} sets exercise scale,
 high dimensionality, and a non-Euclidean metric: SIFT1M and GIST1M
@@ -593,7 +627,8 @@ fragmented $k$-NN graph, so none of them exercises the bridges.
 alone at the operating $\kmax$ (Section~\ref{sec:connectivity}), measured with
 an \emph{exact} $k$-NN graph for the $n = 4{,}000$ sets, where the exact
 reference is affordable and Table~\ref{tab:bridges} is computed, and with the
-\emph{approximate} graph at full $n$ for the rest.}
+\emph{approximate} graph at full $n$ for the rest. It is not reported for the
+scale family, where neither reference is affordable.}
 \label{tab:datasets}
 \centering
 \footnotesize
@@ -617,7 +652,11 @@ manifold   & \texttt{manifold\_exact} & 4{,}000   & 128 & 24 & 16 \\
            & \texttt{manifold\_mid}   & 100{,}000 & 128 & 24 & 132 \\
            & \texttt{manifold\_wide}  & 100{,}000 & 256 & 24 & 271 \\
 \midrule
-capacity   & \texttt{capacity10m}   & 10{,}000{,}000 & 32 & 64 & n/a \\
+scale      & \texttt{scale10000000} & 10{,}000{,}000 & 32 & 32 & n/a \\
+           & \texttt{scale20000000} & 20{,}000{,}000 & 32 & 32 & n/a \\
+           & \texttt{scale30000000} & 30{,}000{,}000 & 32 & 32 & n/a \\
+           & \texttt{scale40000000} & 40{,}000{,}000 & 32 & 32 & n/a \\
+           & \texttt{scale50000000} & 50{,}000{,}000 & 32 & 32 & n/a \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -673,12 +712,15 @@ absolute wall-clock figures are not, and are never pooled across machines.
 
 \subsection{Provenance}
 \label{sec:provenance}
-All figures below derive from 6{,}201 cluster measurements of the method as
+All figures below derive from 9{,}421 cluster measurements of the method as
 described here, over up to 5 seeds, with zero failed runs. Every experiment
 uses multiple seeds because NN-Descent is randomized and its reverse cache is
 deliberately race-tolerant. Experiments holding the $k$-NN graph exact are
 deterministic and use 2 seeds, which we verified by observing a standard
-deviation of exactly zero across 5.
+deviation of exactly zero across 5. Two results predate that set and are
+carried over unchanged, because the quantity each reports is unaffected by the
+implementation work since: Table~\ref{tab:bridges}, which holds the $k$-NN half
+exact on both arms, and Fig.~\ref{fig:components}, which counts components.
 
 \subsection{Anti-Hub Bridges Match the Exact Spanning Tree}
 \label{sec:bridgeresults}
@@ -721,10 +763,11 @@ reduce that to one.
 \label{sec:connectivity}
 
 Fig.~\ref{fig:components} reports the component count of the $k$-NN graph alone
-as a function of $\kmax$. \textbf{Every real data set we examined connects at
-$\kmax \le 24$}, and the operating range of this work and of \cite{coresg} is 24
-to 32. In contrast, the synthetic manifold sets do not connect at any $\kmax$ in
-the range, which is why they are included.
+as a function of $\kmax$. \textbf{Every real data set we examined connects
+within the operating range of 24 to 32}, which is the range of this work and of
+\cite{coresg}; \texttt{gist1m} requires $\kmax = 24$ and \texttt{fma\_chroma}
+requires $\kmax = 32$. In contrast, the synthetic manifold sets do not connect
+at any $\kmax$ in the range, which is why they are included.
 
 \begin{figure}[!t]
 \centering
@@ -767,8 +810,8 @@ the range, which is why they are included.
 \end{axis}
 \end{tikzpicture}
 \caption{Components of the $k$-NN graph alone, full $n$, mean of 3 seeds. Every
-real data set reaches a single component at $\kmax \le 24$; the synthetic
-manifold sets never do. Ambient dimensionality does not explain the threshold:
+real data set plotted reaches a single component at $\kmax \le 24$; the
+synthetic manifold sets never do. Ambient dimensionality does not explain the threshold:
 \texttt{20ng\_tfidf} ($d=1000$) connects at $\kmax = 4$ while \texttt{gist1m}
 ($d=960$) requires $\kmax = 24$.}
 \label{fig:components}
@@ -782,10 +825,11 @@ structure.} If the $k$-NN graph is already connected, the spanning tree in
 supplied, so the union in \eqref{eq:coresg} equals its first term and the second
 term can be omitted without changing any extracted clustering. This also
 explains why an approximation as coarse as ours suffices on such data. Deriving
-the component labeling costs 0.08 to 3.5\,ms across our data sets, compared with
-5.3 to 222\,ms of hubness and bridge work, a factor of 48 to 136. Thus, testing
-connectivity first and skipping the bridge computation when the graph is
-connected adds little cost.
+the component labeling costs 0.08 to 3.5\,ms across our data sets, against 2.6
+to 53\,ms for the bridge spanning tree that a connected graph renders
+unnecessary. The labeling is the cheaper of the two on every data set measured,
+so testing connectivity first and skipping the bridge computation when the graph
+is connected costs less than it saves.
 
 \textbf{Ambient dimensionality does not predict the threshold.}
 \texttt{20ng\_tfidf} at $d=1000$ connects at $\kmax=4$; \texttt{gist1m} at
@@ -798,7 +842,7 @@ these scales, largely lack.
 residual NN-Descent error in the form of long cross-component edges that connect
 a graph that an exact $k$-NN construction would leave in pieces. At the
 operating $\kmax$, the exact graph on \texttt{manifold\_c24} yields 24
-components, and the approximate graph yields 24 to 28, because a missed neighbor
+components, and the approximate graph yields 27 to 29, because a missed neighbor
 removes an edge whereas a substituted one remains local. The effect reverses
 once $\kmax$ approaches the component size (\texttt{manifold\_c32} at
 $\kmax=64$: 30 approximate against 32 exact), so we state the claim narrowly.
@@ -807,15 +851,16 @@ $\kmax=64$: 30 approximate against 32 exact), so we state the claim narrowly.
 \label{sec:memory}
 
 Table~\ref{tab:memory} reports one build of $5\times10^5$ points at instance
-counts from 1 to 64, measured on four GPUs. The reported quantity is the
-largest single instance a device had to hold, which is what decides whether a
-configuration fits.
+counts from 1 to 64, measured on four GPUs at the default overlap
+$\omega = 1.0$. The reported quantity is the largest single instance a device had
+to hold, which is what decides whether a configuration fits.
 
 \begin{table}[!t]
 \caption{One build of \texttt{sift1m} and \texttt{glove100} at
-$n = 5\times10^5$, $\kmax = 32$, on four GPUs. \emph{resident} is the largest
-instance a device had to hold. Recall is sampled over 2000 queries scored
-exactly against every point.}
+$n = 5\times10^5$, $\kmax = 32$, $\omega = 1.0$, on four GPUs. \emph{resident} is
+the largest instance a device had to hold and \emph{factor} is its reduction
+against $m = 1$. Recall is sampled over 2000 queries scored exactly against
+every point.}
 \label{tab:memory}
 \centering
 \footnotesize
@@ -825,33 +870,165 @@ exactly against every point.}
 \cmidrule(lr){3-4}\cmidrule(lr){5-6}
 instances & factor & resident & recall & resident & recall \\
 \midrule
-1  & 1.0$\times$  & 472.0\,MB & 0.9677 & 424.0\,MB & 0.7139 \\
-2  & 2.0$\times$  & 242.0\,MB & \textbf{0.9754} & 217.4\,MB & \textbf{0.7571} \\
-4  & 3.9$\times$  & 122.4\,MB & 0.9720 & 110.0\,MB & 0.7492 \\
-8  & 7.7$\times$  & 61.6\,MB  & 0.9668 & 55.3\,MB  & 0.7309 \\
-16 & 15.3$\times$ & 30.9\,MB  & 0.9594 & 27.8\,MB  & 0.7051 \\
-32 & 30.5$\times$ & 15.5\,MB  & 0.9495 & 13.9\,MB  & 0.6717 \\
-64 & \textbf{61.0}$\times$ & \textbf{7.7\,MB} & 0.9382 & \textbf{7.0\,MB} & 0.6301 \\
+1  & 1.0$\times$  & 472.0\,MB & 0.9677 & 424.0\,MB & 0.7188 \\
+2  & 1.4$\times$  & 329.1\,MB & \textbf{0.9814} & 295.6\,MB & 0.7799 \\
+4  & 2.4$\times$  & 196.5\,MB & 0.9785 & 176.5\,MB & \textbf{0.7890} \\
+8  & 4.4$\times$  & 107.7\,MB & 0.9741 & 96.7\,MB  & 0.7773 \\
+16 & 8.4$\times$  & 56.4\,MB  & 0.9702 & 50.7\,MB  & 0.7646 \\
+32 & 16.3$\times$ & 28.9\,MB  & 0.9669 & 25.9\,MB  & 0.7476 \\
+64 & \textbf{32.3}$\times$ & \textbf{14.6\,MB} & 0.9645 & \textbf{13.1\,MB} & 0.7289 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Residency falls as $1/m$: 472.0\,MB at one instance and 7.7\,MB at 64, a factor
-of 61.0 against the 64 the partition implies. The same ratios hold on
-\texttt{glove100} and at every device count measured, since residency is set by
-the instance count and not by how many devices execute the instances.
+Residency follows \eqref{eq:instancesize}: 472.0\,MB at one instance and
+14.6\,MB at 64, a factor of 32.3. The factor is 32 rather than 64 because
+$\omega = 1.0$ doubles the size of every instance while leaving $m = 1$
+unchanged, where the overlap draws fall back into the single block. At
+$\omega = 0.05$ the same range gives 472.0\,MB against 7.7\,MB, a factor of
+61.0. The ratios hold on \texttt{glove100} and at every device count measured,
+since residency is set by the instance count and not by how many devices execute
+the instances.
 
 Recall does not fall monotonically. It rises from $m=1$ to $m=2$ on both data
-sets, by 0.0077 on \texttt{sift1m} and 0.0432 on \texttt{glove100}, and declines
-from $m=4$ onward. At $m=1$ no repair pass runs, and the repair recovers more
-than the partition costs at low instance counts. Recall at $m=8$ is within
-0.001 of the $m=1$ value on both sets; beyond that the partition dominates, and
-at $m=64$ recall is 0.0295 below the $m=1$ value on \texttt{sift1m} and 0.0838
-below on \texttt{glove100}.
+sets, by 0.0137 on \texttt{sift1m} and 0.0611 on \texttt{glove100}, peaks at
+$m = 2$ on \texttt{sift1m} and at $m = 4$ on \texttt{glove100}, and declines
+from there. At $m = 1$ no repair pass runs. On \texttt{glove100} every instance
+count from 2 to 64 stays above the $m = 1$ value, by 0.0702 at the peak and
+0.0101 at $m = 64$. On \texttt{sift1m} the counts from 2 to 16 stay above it,
+and $m = 32$ and $m = 64$ fall 0.0008 and 0.0032 below.
 
-The wall-clock cost of the same range is 5.763\,s at $m=1$ against 10.521\,s at
-$m=64$ on \texttt{sift1m}, a factor of 1.83. On one GPU the same comparison is
-5.670\,s against 13.435\,s, a factor of 2.37.
+The wall-clock cost of the same range is 5.862\,s at $m=1$ against 10.033\,s at
+$m=64$ on \texttt{sift1m}, a factor of 1.71. On one GPU the same comparison is
+5.757\,s against 15.774\,s, a factor of 2.74; the following section separates the
+two.
+
+\subsection{Instance Overlap}
+\label{sec:overlap}
+
+The overlap fraction $\omega$ of \eqref{eq:instancesize} sets how many points an
+instance holds beyond its own block. Fig.~\ref{fig:overlap} plots recall against
+the largest resident instance for $\omega = 0.05$ and $\omega = 1.00$ over the
+instance counts of Table~\ref{tab:memory}, on four GPUs.
+
+\begin{figure}[!t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  name=top,
+  width=\columnwidth, height=4.4cm,
+  xlabel={}, ylabel={recall},
+  xmode=log, log basis x=10,
+  xmin=6, xmax=700, ymin=0.935, ymax=0.986,
+  xticklabel=\empty,
+  ytick={0.94,0.95,0.96,0.97,0.98},
+  grid=both, grid style={black!12},
+  title={\footnotesize\texttt{sift1m}}, title style={yshift=-1mm},
+  legend style={font=\tiny, at={(0.02,0.04)}, anchor=south west,
+                draw=black!30, legend cell align=left},
+  legend image post style={scale=0.55},
+  label style={font=\footnotesize}, tick label style={font=\footnotesize},
+  every axis plot/.append style={thick, mark size=1.3pt}
+]
+\addplot[mark=square*, black!55, dashed] coordinates
+  {(472.0,0.9677)(242.0,0.9753)(122.4,0.9728)(61.6,0.9672)(30.9,0.9594)(15.5,0.9493)(7.7,0.9393)};
+\addlegendentry{$\omega = 0.05$}
+\addplot[mark=*, black] coordinates
+  {(472.0,0.9677)(329.1,0.9814)(196.5,0.9785)(107.7,0.9741)(56.4,0.9702)(28.9,0.9669)(14.6,0.9645)};
+\addlegendentry{$\omega = 1.00$}
+\end{axis}
+\begin{axis}[
+  at={(top.south west)}, anchor=north west, yshift=-6mm,
+  width=\columnwidth, height=4.4cm,
+  xlabel={largest resident instance (MB)}, ylabel={recall},
+  xmode=log, log basis x=10,
+  xmin=6, xmax=700, ymin=0.615, ymax=0.805,
+  ytick={0.64,0.68,0.72,0.76,0.80},
+  grid=both, grid style={black!12},
+  title={\footnotesize\texttt{glove100}}, title style={yshift=-1mm},
+  label style={font=\footnotesize}, tick label style={font=\footnotesize},
+  every axis plot/.append style={thick, mark size=1.3pt}
+]
+\addplot[mark=square*, black!55, dashed] coordinates
+  {(424.0,0.7167)(217.4,0.7566)(110.0,0.7492)(55.3,0.7317)(27.8,0.7037)(13.9,0.6745)(7.0,0.6300)};
+\addplot[mark=*, black] coordinates
+  {(424.0,0.7188)(295.6,0.7799)(176.5,0.7890)(96.7,0.7773)(50.7,0.7646)(25.9,0.7476)(13.1,0.7289)};
+\end{axis}
+\end{tikzpicture}
+\caption{Recall against the largest resident instance at two overlap fractions,
+$n = 5\times10^5$, $\kmax = 32$, four GPUs. Each curve runs over
+$m \in \{1, 2, 4, 8, 16, 32, 64\}$, right to left. At $m = 1$ no overlap is
+drawn and no repair pass runs, so the two arms are the same configuration and
+differ only by the randomization of the descent.}
+\label{fig:overlap}
+\end{figure}
+
+The $\omega = 1.00$ curve lies above the $\omega = 0.05$ curve at every
+residency the two share. Table~\ref{tab:overlap} pairs the configurations that
+place comparable amounts on a device, obtained by doubling $m$ alongside
+$\omega$.
+
+\begin{table}[!t]
+\caption{Configurations of comparable per-device residency, four GPUs,
+$n = 5\times10^5$, $\kmax = 32$. Each pair doubles the instance count alongside
+the overlap.}
+\label{tab:overlap}
+\centering
+\footnotesize
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+data set & configuration & resident & recall & total \\
+\midrule
+\texttt{sift1m}
+  & $m = 8$, $\omega = 0.05$  & 61.6\,MB  & 0.9672 & 10.36\,s \\
+  & $m = 16$, $\omega = 1.00$ & 56.4\,MB  & \textbf{0.9702} & \textbf{10.02\,s} \\
+\addlinespace[1pt]
+  & $m = 16$, $\omega = 0.05$ & 30.9\,MB  & 0.9594 & 10.54\,s \\
+  & $m = 32$, $\omega = 1.00$ & 28.9\,MB  & \textbf{0.9669} & \textbf{9.20\,s} \\
+\addlinespace[1pt]
+  & $m = 32$, $\omega = 0.05$ & 15.5\,MB  & 0.9493 & 10.20\,s \\
+  & $m = 64$, $\omega = 1.00$ & 14.6\,MB  & \textbf{0.9645} & \textbf{10.03\,s} \\
+\midrule
+\texttt{glove100}
+  & $m = 4$, $\omega = 0.05$  & 110.0\,MB & 0.7492 & 8.44\,s \\
+  & $m = 8$, $\omega = 1.00$  & 96.7\,MB  & \textbf{0.7773} & \textbf{7.84\,s} \\
+\addlinespace[1pt]
+  & $m = 8$, $\omega = 0.05$  & 55.3\,MB  & 0.7317 & \textbf{8.19\,s} \\
+  & $m = 16$, $\omega = 1.00$ & 50.7\,MB  & \textbf{0.7646} & 9.32\,s \\
+\addlinespace[1pt]
+  & $m = 16$, $\omega = 0.05$ & 27.8\,MB  & 0.7037 & 9.60\,s \\
+  & $m = 32$, $\omega = 1.00$ & 25.9\,MB  & \textbf{0.7476} & \textbf{9.05\,s} \\
+\addlinespace[1pt]
+  & $m = 32$, $\omega = 0.05$ & 13.9\,MB  & 0.6745 & \textbf{9.50\,s} \\
+  & $m = 64$, $\omega = 1.00$ & 13.1\,MB  & \textbf{0.7289} & 9.67\,s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The $\omega = 1.00$ arm holds less on the device and reaches higher recall in
+all seven pairs: by 0.0029 to 0.0152 on \texttt{sift1m} and by 0.0281 to 0.0544
+on \texttt{glove100}. Total time falls in five of the seven and rises in two.
+
+The time behavior follows from where each phase runs. Across the seven pairs the
+repair pass is 2.5\% to 30.0\% shorter at $\omega = 1.00$, and the instance phase
+is 72\% to 87\% longer. The repair pass executes on the host and the instance
+phase on the devices, so the exchange is favorable only when there are devices
+to divide the larger phase across. At $m = 64$ on \texttt{sift1m}, one GPU takes
+13.41\,s at $\omega = 0.05$ and 15.77\,s at $\omega = 1.00$; four GPUs take
+10.26\,s and 10.03\,s.
+
+Raising $\omega$ also raises the share of the build the devices execute. At
+$m \ge 8$ the instance phase scales by 3.83 to 3.87 on four devices at
+$\omega = 0.05$ and by 3.94 to 3.99 at $\omega = 1.00$ on \texttt{sift1m}, and by
+3.82 to 3.91 against 3.90 to 3.98 on \texttt{glove100}. At $m = 64$ on four
+devices, $f$ rises from 0.100 to 0.189 on \texttt{sift1m} and from 0.104 to
+0.208 on \texttt{glove100}.
+
+An intermediate setting was measured on \texttt{sift1m}. At $\omega = 0.50$ the
+frontier lies between the two, and the shortest build of the whole grid is there:
+8.13\,s at 0.9694 recall and 84.1\,MB resident, $m = 8$. A configuration selected
+for wall clock alone therefore differs from one selected for recall at a given
+residency.
 
 \subsection{Construction at Scale}
 \label{sec:scale}
@@ -861,7 +1038,8 @@ at $d = 32$, with the instance count raised in proportion to $n$.
 
 \begin{table}[!t]
 \caption{Single builds on synthetic data, $d = 32$, $\kmax = 32$, four GPUs,
-$m = n / 5\times10^5$. No device ran out of memory in any configuration.}
+$m = n / 5\times10^5$, $\omega = 0.05$. No device ran out of memory in any
+configuration.}
 \label{tab:scale}
 \centering
 \footnotesize
@@ -869,24 +1047,25 @@ $m = n / 5\times10^5$. No device ran out of memory in any configuration.}
 \toprule
 $n$ & $m$ & total & resident & host & recall \\
 \midrule
-$1\times10^7$ & 20  & 209.5\,s  & 293.3\,MB & 10.4\,GB & 0.9993 \\
+$1\times10^7$ & 20  & 209.5\,s  & 293.3\,MB & 10.5\,GB & 0.9993 \\
 $2\times10^7$ & 40  & 392.4\,s  & 293.7\,MB & 20.5\,GB & 0.9987 \\
 $3\times10^7$ & 60  & 581.8\,s  & 293.8\,MB & 30.6\,GB & 0.9987 \\
 $4\times10^7$ & 80  & 838.9\,s  & 293.8\,MB & 40.7\,GB & 0.9985 \\
-$5\times10^7$ & 100 & 1090.2\,s & \textbf{293.9\,MB} & 50.7\,GB & 0.9970 \\
+$5\times10^7$ & 100 & 1090.2\,s & \textbf{293.9\,MB} & 50.5\,GB & 0.9970 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 Per-device residency varies by 0.6\,MB across a fivefold increase in $n$, while
-host memory grows linearly at 1013 bytes per point. Recall falls from 0.9993 to
+host memory grows linearly at 1001 bytes per point. Recall falls from 0.9993 to
 0.9970 over the same range. The $5\times10^7$-point build completes in 18.2
 minutes.
 
 A single-instance build of the same data requires 560 bytes per point on the
 device, placing $5\times10^7$ points at 28.0\,GB and $10^7$ at 5.6\,GB. The
-$10^7$-point single-instance build completes on an 8\,GB accelerator; the
-larger sizes exceed it.
+$10^7$-point single-instance build was run to confirm the arithmetic: it placed
+5.600\,GB on one accelerator, reported no out-of-memory instance and completed
+in 119.2\,s. The larger sizes exceed the 8\,GB device.
 
 \subsection{Multi-GPU Scaling}
 \label{sec:scaling}
@@ -895,8 +1074,10 @@ Table~\ref{tab:scaling} reports the instance phase and the whole build against
 device count, at fixed instance counts.
 
 \begin{table}[!t]
-\caption{\texttt{sift1m} at $n = 5\times10^5$, $\kmax = 32$. \emph{instance} is
-the phase executed on the devices; \emph{total} includes the host phases.}
+\caption{\texttt{sift1m} at $n = 5\times10^5$, $\kmax = 32$, $\omega = 0.05$.
+\emph{instance} is the phase executed on the devices; \emph{total} includes the
+host phases. Section~\ref{sec:overlap} reports the same measurement at
+$\omega = 1.00$.}
 \label{tab:scaling}
 \centering
 \footnotesize
@@ -921,7 +1102,7 @@ speed-up of 1.28.
 The difference follows from the share of the build the devices execute. At
 $m = 64$ on one GPU the instance phase is 0.290 of the total; on four it is
 0.097, because that phase shrinks while the host phases do not. At
-$n = 5\times10^7$ the instance phase is 122.9\,s of 1090.2\,s, or 0.113, and the
+$n = 5\times10^7$ the instance phase is 123.4\,s of 1090.2\,s, or 0.113, and the
 repair pass is 863.0\,s, or 0.791.
 
 \subsection{The Repair Pass}
@@ -932,8 +1113,8 @@ host. Table~\ref{tab:refine} reports recall against the number of NN-Descent
 rounds it is allowed.
 
 \begin{table}[!t]
-\caption{\texttt{sift1m} at $n = 5\times10^5$, $m = 8$, four GPUs. Rounds are
-the iteration ceiling of the repair pass; five is the default.}
+\caption{\texttt{sift1m} at $n = 5\times10^5$, $m = 8$, $\omega = 0.05$, four
+GPUs. Rounds are the iteration ceiling of the repair pass; five is the default.}
 \label{tab:refine}
 \centering
 \footnotesize
@@ -941,23 +1122,45 @@ the iteration ceiling of the repair pass; five is the default.}
 \toprule
 rounds & repair & total & $f$ & recall \\
 \midrule
-1 & 0.912\,s & 4.061\,s  & 0.275 & 0.2212 \\
-2 & 3.587\,s & 6.445\,s  & 0.172 & 0.6558 \\
-3 & 5.248\,s & 8.335\,s  & 0.134 & 0.8947 \\
-5 & 7.176\,s & 10.094\,s & 0.111 & \textbf{0.9676} \\
+1 & 0.835\,s & 2.963\,s & 0.376 & 0.2219 \\
+2 & 3.502\,s & 5.625\,s & 0.199 & 0.6556 \\
+3 & 5.206\,s & 7.345\,s & 0.154 & 0.8942 \\
+5 & 7.304\,s & 9.423\,s & 0.118 & \textbf{0.9671} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Reducing the pass from five rounds to one lowers the build time by 59.8\% and
-recall by 0.7464. Two further scopings were measured. Restricting the pass to
-the nodes the merge changed leaves the active set at $5\times10^5$ of
-$5\times10^5$ nodes, because the graph is empty before the merge and every
-accepted edge is an insertion. Executing the pass as instances over
+Reducing the pass from five rounds to one lowers the build time by 68.6\% and
+recall by 0.7452. Three further scopings were measured.
+
+Restricting the pass to the nodes the merge changed leaves the active set at
+$5\times10^5$ of $5\times10^5$ nodes, because the graph is empty before the merge
+and every accepted edge is an insertion. Executing the pass as instances over
 locality-grown blocks stages 478\,591 nodes at four blocks and 1\,265\,903 at
 32, for a data set of $2\times10^5$, and the largest block is 150.0\,MB against
 49.0\,MB for the descent instances of the same build; omitting the block
 closures lowers recall to 0.8748 at four blocks and 0.6088 at sixteen.
+
+The third is the symmetric merge of Zhao et al. \cite{knn_merge}, run in place
+of the pass: withhold the rear of every list, refill the freed slots with
+candidates drawn from other blocks, descend only on pairs that cross a block
+boundary, then restore the withheld entries. Measured on \texttt{sift1m} at
+$n = 5\times10^5$ with eight instances on one device, against a 3.85\,s pass at
+0.9672 recall, it reaches 2.82\,s at 0.9412, 2.22\,s at 0.8735 and 1.52\,s at
+0.6099 as the retained prefix falls from three quarters of the list to one
+quarter. Truncating the candidate scan alone, with neither the refill nor the
+cross-block filter, reaches 3.02\,s at 0.9416, 2.15\,s at 0.8729 and 0.97\,s at
+0.6043 at the same three prefix lengths, so at eight instances the two
+additional mechanisms account for none of the effect. At two instances, which is
+the two-set case the algorithm is derived for, the cross-block filter is worth
+14\% of the pass for 0.004 of recall. The truncation gives a better
+time-quality curve than shortening the descent, by 9\% at recall 0.94, and no
+prefix length reaches the recall of the full-length scan.
+
+The pass is therefore not shortened at equal recall by any of the four
+scopings. Section~\ref{sec:overlap} reports the one measure that reduces it: the
+overlap fraction moves part of the work into the instance phase, which the
+devices execute.
 
 \subsection{Comparison with a GPU Rebuild: cuML}
 \label{sec:cuml}
@@ -975,21 +1178,20 @@ $\mpts = 10$ for cuML.}
 \toprule
 $n$ & this work & cuML & speed-up \\
 \midrule
-$2\times10^5$ & 3.56\,s  & 7.41\,s   & 2.08$\times$ \\
 $5\times10^5$ & 9.63\,s  & 43.57\,s  & 4.53$\times$ \\
 $1\times10^6$ & 17.99\,s & 180.03\,s & \textbf{10.01}$\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Over a fivefold increase in $n$, our cost rises by a factor of 5.05 and cuML's
-by 24.3. cuML exhausts an 8\,GB device at $8\times10^6$ points; per-device
-residency for this work at $5\times10^7$ points is 293.9\,MB
-(Table~\ref{tab:scale}).
+Over a doubling of $n$, our cost rises by a factor of 1.87 and cuML's by 4.13.
+On a 32-dimensional data set cuML exhausts an 8\,GB device at $8\times10^6$
+points, where per-device residency for this work at $5\times10^7$ points of the
+same dimensionality is 293.9\,MB (Table~\ref{tab:scale}).
 
 A parameter sweep compounds the difference. One CORE-SG serves every
-$\mpts \le \kmax$, and extracting a spanning tree from it costs 0.02 to 0.32\,s,
-against one cuML fit per value.
+$\mpts \le \kmax$, and extracting a spanning tree from it costs 0.02 to 0.41\,s
+over the sizes measured, against one cuML fit per value.
 
 \subsection{Backend Agreement}
 \label{sec:parity}
@@ -1025,14 +1227,23 @@ neighborhood graph, and an anti-hub bridge estimate for the spanning tree whose
 selected set is sized independently of $n$.
 
 Per-device residency is set by the instance count. Raising it from 1 to 64
-lowers the largest resident instance from 472.0\,MB to 7.7\,MB, a factor of
-61.0, at a cost of 1.83 in wall clock on four devices. Because the instance
-count is raised in proportion to $n$, residency stays at 293\,MB across a
-fivefold increase in data set size, and a $5\times10^7$-point graph is built in
-18.2 minutes at 0.997 recall. A single-instance build of the same data requires
-28.0\,GB on the device. Against cuML on the same accelerator, construction is
-2.08 to 10.01 times faster from $2\times10^5$ to $10^6$ points, and cuML
-exhausts an 8\,GB device at $8\times10^6$ points.
+lowers the largest resident instance from 472.0\,MB to 14.6\,MB at an overlap of
+1.0, and to 7.7\,MB at an overlap of 0.05, for a cost of 1.71 in wall clock on
+four devices. Because the instance count is raised in proportion to $n$,
+residency stays at 293\,MB across a fivefold increase in data set size, and a
+$5\times10^7$-point graph is built in 18.2 minutes at 0.997 recall. A
+single-instance build of the same data requires 28.0\,GB on the device. Against
+cuML on the same accelerator, construction is 4.53 to 10.01 times faster from
+$5\times10^5$ to $10^6$ points, and cuML exhausts an 8\,GB device at
+$8\times10^6$ points of 32 dimensions.
+
+Instance overlap sets how much of the work falls on the devices rather than the
+host. Doubling the instance count alongside the overlap holds per-device
+residency and raises recall in every pair measured, by 0.0029 to 0.0152 on
+\texttt{sift1m} and 0.0281 to 0.0544 on \texttt{glove100}, and raises the
+instance phase's scaling on four devices to 3.94--3.99 against 3.83--3.87 at the
+lower overlap in the same suite. The exchange requires devices to absorb the
+larger instance phase: on one GPU the higher overlap is slower.
 
 The bridge estimate spans $\lceil d \ln |E| \rceil$ nodes. Its trees are at most
 0.024\% heavier than the exact ones and yield identical flat clusterings, at
@@ -1043,12 +1254,17 @@ points.
 uncompared, and the pass that recovers them is 79.1\% of a $5\times10^7$-point
 build and executes on the host. It is why the build's device-parallel fraction
 is 0.113 at that size while the instance phase alone scales by 3.80 on four
-devices. Three scopings were measured and none reduced it. The pass cannot be
-shortened: at one round instead of five, recall falls from 0.9676 to 0.2212. It
-cannot be restricted to the nodes the merge changed, because a build starts from
-an empty graph and the merge changes all of them. Executing it as instances over
+devices. Four scopings were measured and none shortened it at equal recall. At
+one round instead of five, recall falls from 0.9671 to 0.2219. It cannot be
+restricted to the nodes the merge changed, because a build starts from an empty
+graph and the merge changes all of them. Executing it as instances over
 locality-grown blocks stages 2.4 to 6.3 times $n$ nodes, since a $k$-NN graph in
-$128$ dimensions admits no partition whose blocks have small boundaries.
+$128$ dimensions admits no partition whose blocks have small boundaries. Run as
+the symmetric merge of \cite{knn_merge}, the truncation of the candidate scan
+accounts for the entire saving at eight instances, and no prefix length reaches
+the recall of the full-length scan. What does reduce the pass is the overlap
+fraction, which relocates part of the work to the devices rather than removing
+it.
 
 A global pass on the device requires the whole graph resident, which is the
 condition under which partitioning is unnecessary: at $d = 128$ and
@@ -1061,10 +1277,13 @@ communication cost over PCIe is untested here.
 
 \textbf{Reducing the parameter surface.} The method exposes an instance count,
 a repair budget, an overlap fraction, an anti-hub multiplier, a per-component
-quota and a bridge cost ceiling. Per-device cost is $4\,\mathrm{stride} + 8k + s$
-bytes per point \eqref{eq:devicecost}, so the smallest instance count that fits
-a given accelerator is computable rather than tuned, and Table~\ref{tab:memory}
-indicates that count is also the fastest and the most accurate.
+quota and a bridge cost ceiling. The largest resident instance is
+$(1 + \omega)(4\,\mathrm{stride} + 8k + s)\,n/m$ bytes
+\eqref{eq:instancesize}, \eqref{eq:devicecost}, so the pairs of instance count
+and overlap that fit a given accelerator are computable rather than tuned. Among
+those pairs, Tables~\ref{tab:memory} and~\ref{tab:overlap} select the one with
+the smallest instance count and the largest overlap. Whether the remaining four
+parameters need to be exposed at all is open.
 
 \textbf{Extension without rebuilding.} The instance abstraction does not require
 that a block be new. An instance whose context is drawn from an existing graph
