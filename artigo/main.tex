@@ -43,6 +43,11 @@
 
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
+% ieeeaccess.cls loads neither; `algorithmic` supplies the body macros and
+% `algorithm` the float wrapper that numbers and captions them. The caption
+% path is the same one the TikZ figures use, so the \xfigwd default below
+% covers it.
+\usepackage{algorithm}
 \usepackage{algorithmic}
 \usepackage{graphicx}
 \usepackage{textcomp}
@@ -120,7 +125,7 @@ Clustering at Scale}
 
 \begin{abstract}
 
-Density-based clustering methods such as HDBSCAN* rely on a smoothing parameter whose appropriate value is not known in advance, and evaluating several candidate values is expensive because each evaluation rests on a quadratic computation. The CORE-SG replacement graph removes the repetition: one graph, the union of a $k$-nearest-neighbor graph and a minimum spanning tree, serves every smoothing value up to a chosen maximum. Its construction is centralized, so the graph is built and stored on a single device and the largest data set that can be processed is bounded by the memory of that device. We reformulate the construction as a set of independent subproblems, called instances. An instance holds a block of points together with its own neighborhood state, references no global structure while it runs, and is scheduled onto any available accelerator without cross-device communication. The memory a device must hold is then set by the number of instances rather than by the number of points, so a larger data set is processed by raising the instance count rather than by acquiring a larger accelerator. Partitioning leaves pairs in separate blocks uncompared; a repair pass over the merged graph recovers them, and an overlap between blocks moves part of that pass from the host onto the devices. The minimum spanning tree is replaced by an anti-hub bridge estimate: the edges the neighborhoods cannot supply are those bridging density-separated components, such bridges leave component borders, and borders are identified by the lowest locally normalized reverse degree. The set spanned is sized by dimensionality and edge count rather than by the number of points. Per-device memory falls in proportion to the instance count and stays constant as the data set grows, the estimated spanning trees yield flat clusterings identical to those of the exact trees, and the construction processes data sets that exhaust the device under a GPU implementation of HDBSCAN*.
+Density-based clustering methods such as HDBSCAN* rely on a smoothing parameter whose appropriate value is not known in advance, and evaluating several candidate values is expensive because each evaluation rests on a quadratic computation. The CORE-SG replacement graph removes the repetition: one graph, the union of a $k$-nearest-neighbor graph and a minimum spanning tree, serves every smoothing value up to a chosen maximum. Its construction is centralized, so the graph is built and stored on a single device and the largest data set that can be processed is bounded by the memory of that device. We reformulate the construction as a set of independent subproblems, called instances. An instance holds a block of points together with its own neighborhood state, references no global structure while it runs, and is scheduled onto any available accelerator without cross-device communication. The memory a device must hold is then set by the number of instances rather than by the number of points, so the instance count, not the accelerator, is what a larger data set requires. Partitioning leaves pairs in separate blocks uncompared; a repair pass over the merged graph recovers them, and an overlap between blocks moves part of that pass from the host onto the devices. The minimum spanning tree is replaced by an anti-hub bridge estimate: the edges the neighborhoods cannot supply are those bridging density-separated components, such bridges leave component borders, and borders are identified by the lowest locally normalized reverse degree. The set spanned is sized by dimensionality and edge count rather than by the number of points. Per-device memory falls in proportion to the instance count and stays constant as the data set grows, the estimated spanning trees yield flat clusterings identical to those of the exact trees, and the construction processes data sets that exhaust the device under a GPU implementation of HDBSCAN*.
 
 \end{abstract}
 
@@ -165,7 +170,7 @@ different reasons and admit different remedies.
       (Section~\ref{sec:overlap}).
 
 \item \textbf{An anti-hub bridge estimate replacing the MST.} The edges the
-      neighborhoods cannot supply are precisely those bridging density-separated
+      neighborhoods cannot supply are those bridging density-separated
       components, and such bridges leave component borders. We estimate
       borders by \emph{local inverse hubness}, a reverse degree normalized by the
       reverse degrees of a node's own neighbors, which makes the statistic
@@ -294,6 +299,8 @@ Fig.~\ref{fig:pipeline} summarizes the construction pipeline. The data set is pr
 
 Once construction is complete, a query for $\mathrm{MST}_{\mpts}$ reweights the union of the $k$-NN edges and bridge edges using $\mrd^{\mpts}$ and extracts an MST from $O(n\kmax)$ edges.
 
+Algorithm~\ref{alg:knn} gives the first half and Algorithm~\ref{alg:bridges} the second. The second reads the finished $k$-NN graph and shares no other state with the first.
+
 \begin{figure}[!t]
 \centering
 \begin{tikzpicture}[
@@ -341,16 +348,47 @@ $n$.}
 \subsection{The $k$-NN Graph: Independent Instances}
 \label{sec:knn}
 
+\begin{algorithm}[!t]
+\caption{The $k$-NN graph, from independent instances}
+\label{alg:knn}
+\begin{algorithmic}[1]
+\REQUIRE data set $X$ with $|X| = n$; neighborhood size $\kmax$; instance count
+         $m$; overlap fraction $\omega$; stopping rate $\delta$; repair rounds
+         $r$
+\ENSURE approximate $\kmax$-NN graph $G$ over $X$
+\STATE cut a random permutation of $X$ into blocks $B_1, \dots, B_m$
+\FOR{$i \gets 1$ \TO $m$}
+  \COMMENT{independent; scheduled on any accelerator}
+  \STATE $S_i \gets \omega|B_i|$ points drawn uniformly from $X \setminus B_i$
+  \STATE $I_i \gets B_i \cup S_i$
+  \STATE $L_i \gets \textsc{NNDescent}(I_i, \kmax)$, halting when a round
+         yields fewer than $\delta\kmax|I_i|$ updates
+\ENDFOR
+\STATE $G \gets$ empty top-$\kmax$ lists over $X$
+\FOR{$i \gets 1$ \TO $m$}
+  \COMMENT{merge; independent of the order}
+  \FORALL{$v \in B_i$ and $(u, w) \in L_i[v]$}
+    \STATE offer $(u, w)$ to $G[v]$, which keeps the $\kmax$ smallest
+  \ENDFOR
+\ENDFOR
+\IF{$m > 1$}
+  \STATE $G \gets \textsc{NNDescent}(G, \kmax)$ for $r$ rounds
+         \COMMENT{repair, on the host}
+\ENDIF
+\RETURN $G$
+\end{algorithmic}
+\end{algorithm}
+
 We construct the $k$-NN graph through a collection of independent NN-Descent
-\emph{instances}. A random permutation of the points is cut into $m$ blocks.
+\emph{instances}, as Algorithm~\ref{alg:knn} sets out. A random permutation of the points is cut into $m$ blocks.
 Each block, together with an overlap sample drawn from the remaining blocks,
 forms one instance. An instance is a self-contained NN-Descent problem: it
 holds its own vectors and its own neighborhood lists, and does not access
 global state during execution.
 
-Three consequences follow from this construction. The memory an instance
-requires is set by its own block rather than by the data set, so a graph larger
-than the memory of a single accelerator is processed by raising $m$.
+The construction has three consequences. The memory an instance requires is set
+by its own block and not by the data set, so a graph larger than the memory of a
+single accelerator is processed by raising $m$.
 Instances do not communicate during execution and are therefore scheduled
 independently on any available accelerator. The instance count defines the
 available unit of parallelism independently of the number of devices, and
@@ -414,10 +452,50 @@ scope are examined in Section~\ref{sec:repaircost}.
 \subsection{The MST: Anti-Hub Bridges}
 \label{sec:bridges}
 
+\begin{algorithm}[!t]
+\caption{The spanning-tree half, estimated from anti-hubs}
+\label{alg:bridges}
+\begin{algorithmic}[1]
+\REQUIRE $\kmax$-NN graph $G$ with undirected edge set $E$; dimensionality $d$;
+         multiplier $\alpha$; selection quota $q$; representatives per component
+         $\rho$
+\ENSURE bridge edge set $\mathcal{B}$
+\FORALL{$v \in V(G)$}
+  \STATE $\mathrm{rd}(v) \gets |\{u : v \in \mathrm{NN}(u)\}|$
+         \COMMENT{reverse degree, \eqref{eq:rd}}
+\ENDFOR
+\FORALL{$v \in V(G)$}
+  \STATE $\mathrm{score}(v) \gets \mathrm{rd}(v) \big/ \big(
+         |\mathrm{NN}(v)|^{-1}\textstyle\sum_{u \in \mathrm{NN}(v)}
+         \mathrm{rd}(u) \big)$  \COMMENT{\eqref{eq:score}}
+\ENDFOR
+\STATE $\mathcal{C} \gets \textsc{Components}(G)$
+       \COMMENT{union-find over the adjacency arrays}
+\STATE $A \gets$ the $\lceil \alpha d \ln|E| \rceil$ nodes lowest in
+       $(\mathrm{score}, \mathrm{rd}, \mathrm{id})$
+\FORALL{$c \in \mathcal{C}$}
+  \STATE $A \gets A \cup \{$the $q$ nodes of $c$ lowest in that order$\}$
+         \COMMENT{quota}
+\ENDFOR
+\STATE $\mathcal{B} \gets \textsc{Mst}(A)$ under $\mrd^{\kmax}$, each edge
+       stored with its base distance
+\STATE $\mathcal{C}' \gets \textsc{Components}(G \cup \mathcal{B})$
+\IF{$|\mathcal{C}'| > 1$}
+  \COMMENT{the estimate left a forest}
+  \STATE $R \gets \bigcup_{c \in \mathcal{C}'} \{$the $\rho$ lowest-scoring
+         nodes of $c\}$
+  \STATE $T \gets \textsc{Mst}(R)$ under $\mrd^{\kmax}$
+  \STATE $\mathcal{B} \gets \mathcal{B} \cup \{e \in T :$ the endpoints of $e$
+         lie in different components of $\mathcal{C}'\}$
+\ENDIF
+\RETURN $\mathcal{B}$
+\end{algorithmic}
+\end{algorithm}
+
 Maintaining an MST under insertion is possible \cite{mst_maintenance}, but it is
 costly in this setting because the tree is defined over a \emph{complete} graph
-whose $O(n^2)$ edge weights all change when $\mpts$ changes. We therefore use an
-estimate.
+whose $O(n^2)$ edge weights all change when $\mpts$ changes. We use an estimate
+instead, given as Algorithm~\ref{alg:bridges}.
 
 Recall from \eqref{eq:mrd} that the MST need only supply edges bridging
 density-separated components. Such a bridge leaves a component from its
@@ -439,7 +517,8 @@ their own $k$ nearest neighbors, and
 the reverse degree of $v$ divided by the mean reverse degree over $v$'s own
 neighbors. An interior point sits inside many of its neighbors'
 neighborhoods; a border point sits inside few, because its neighbors' lists
-point back into the component. The denominator is essential in \eqref{eq:score}:
+point back into the component. The denominator does the work in
+\eqref{eq:score}:
 comparing $\mathrm{rd}(v)$ against the global population would mainly identify
 sparse components, whereas comparing it against $v$'s own neighborhoods makes
 the score invariant to local density. A border point of a dense component
@@ -452,15 +531,13 @@ computes an exact MST over that set in mutual-reachability space. Its edges
 become the bridges, stored with their base distance so that the reweighting for
 a query $\mpts$ treats them identically to $k$-NN edges.
 
-The size of the selected set depends on $d$ and $|E|$, \emph{not on $n$}. The
-choice of $|E|$ rather than $n$ is deliberate: the bridges must cover the places
-that the neighborhoods fail to reach, and this depends on how densely the graph
-is wired rather than on how many points it contains. For example, $n$ points at
-$\kmax = 64$ leave far fewer gaps than the same $n$ points at $\kmax = 8$. The
-edge count carries this information, whereas the point count does not. Using
-$\ln |E|$ rather than $|E|$ keeps the term from growing substantially with the
-graph, since $|E|$ is itself $O(n\kmax)$ and its logarithm increases by 0.69 for
-every doubling. The bridge computation is therefore $O(m^2 d)$ for $m$ selected
+The size of the selected set depends on $d$ and $|E|$, not on $n$. The bridges
+cover the places the neighborhoods fail to reach, and how many such places there
+are depends on how densely the graph is wired: $n$ points at $\kmax = 64$ leave
+fewer gaps than the same $n$ points at $\kmax = 8$. The edge count carries that
+and the point count does not. Using
+$\ln |E|$ in place of $|E|$ keeps the term slow-growing: $|E|$ is itself
+$O(n\kmax)$, and its logarithm increases by 0.69 for every doubling. The bridge computation is therefore $O(m^2 d)$ for $m$ selected
 anti-hubs with $m \ll n$, and no spanning tree must be maintained as points
 arrive.
 
@@ -512,10 +589,9 @@ component labeling is computed once per build. It is a union-find pass over
 the adjacency arrays of the $k$-NN graph, which touches every node and costs
 1 to 2\,ms at $n = 100{,}000$ when spread across a thread pool; adding the
 bridge edges to the labeling afterwards costs a further union per bridge. The
-global labeling raises the question of why the anti-hub score is needed at all
-if the components are already known. The answer is that knowing
-which nodes belong to a component does not say which of them a bridge should
-leave from, and a component may hold millions of nodes. Joining components
+global labeling may make the anti-hub score look redundant. Knowing which nodes
+belong to a component does not say which of them a bridge should leave from,
+however, and a component may hold millions of nodes. Joining components
 directly would require an all-pairs search between them; the score reduces
 each component to the small set of relevant border nodes, and the
 spanning tree is then computed over that small set. Section~\ref{sec:connectivity}
@@ -669,10 +745,9 @@ centralized construction corresponds to. Every instance count is charged against
 it on the same data, the same seed and the same device count, so the ratio
 isolates the cost of decomposition from every other difference.
 
-Our external baseline is \textbf{NVIDIA cuML} \cite{cuml}, whose GPU HDBSCAN* is
-the state of the art for density-based clustering on accelerators. Wall-clock
-time is meaningful here: both implementations are CUDA and run on the same
-device. cuML serves one $\mpts$ per fit, so the multiple-$\mpts$ property of the
+Our external baseline is \textbf{NVIDIA cuML} \cite{cuml}, which provides a
+GPU implementation of HDBSCAN*. Wall-clock time is comparable here: both
+implementations are CUDA and run on the same device. cuML serves one $\mpts$ per fit, so the multiple-$\mpts$ property of the
 CORE-SG has no equivalent there and is reported separately.
 
 Quality is measured against the \textbf{exact CORE-SG} throughout, as
@@ -719,8 +794,9 @@ deliberately race-tolerant. Experiments holding the $k$-NN graph exact are
 deterministic and use 2 seeds, which we verified by observing a standard
 deviation of exactly zero across 5. Two results predate that set and are
 carried over unchanged, because the quantity each reports is unaffected by the
-implementation work since: Table~\ref{tab:bridges}, which holds the $k$-NN half
-exact on both arms, and Fig.~\ref{fig:components}, which counts components.
+implementation work since: Table~\ref{tab:bridges} and
+Table~\ref{tab:knnonly}, which hold the $k$-NN half exact on both arms, and
+Fig.~\ref{fig:components}, which counts components.
 
 \subsection{Anti-Hub Bridges Match the Exact Spanning Tree}
 \label{sec:bridgeresults}
@@ -765,7 +841,7 @@ $\mathrm{MST}_{\mpts}$ extracted at every $\mpts \le \kmax$ spans all $n$ nodes,
 on \texttt{sift1m} and \texttt{glove100} at $n$ up to $10^6$ and on a synthetic
 set at $10^7$: $n - 1$ edges and exactly one component in all 480 extractions.
 
-\subsection{Real \emph{k}-NN Graphs Are Already Connected}
+\subsection{Real \emph{k}-NN Graphs Connect, and What That Is Worth}
 \label{sec:connectivity}
 
 Fig.~\ref{fig:components} reports the component count of the $k$-NN graph alone
@@ -823,35 +899,72 @@ synthetic manifold sets never do. Ambient dimensionality does not explain the th
 \label{fig:components}
 \end{figure}
 
-Three observations follow.
+A connected $k$-NN graph does not make the spanning tree redundant. Neto et al.
+\cite{coresg} show that a connected $\kmax$-NNG need not contain an
+$\mathrm{MST}_{\mpts}$, and give an instance at $k = \mpts = 4$ where it does
+not. The reason is the one \eqref{eq:mrd} gives: an edge whose weight is set by
+the inter-point distance instead of by a core distance is not recoverable from
+neighborhoods, and connectivity says nothing about whether such edges are
+present. They establish this as a possibility and do not measure how large the
+resulting discrepancy is.
 
-\textbf{The MST acts as a guard against fragmentation rather than as essential
-structure.} If the $k$-NN graph is already connected, the spanning tree in
-\eqref{eq:coresg} adds no edges that the neighborhoods have not already
-supplied, so the union in \eqref{eq:coresg} equals its first term and the second
-term can be omitted without changing any extracted clustering. This also
-explains why an approximation as coarse as ours suffices on such data. Deriving
-the component labeling costs 0.08 to 3.5\,ms across our data sets, against 2.6
-to 53\,ms for the bridge spanning tree that a connected graph renders
-unnecessary. The labeling is the cheaper of the two on every data set measured,
-so testing connectivity first and skipping the bridge computation when the graph
-is connected costs less than it saves.
+Table~\ref{tab:knnonly} measures it on the graphs that do connect. The second
+term of \eqref{eq:coresg} is dropped, and the tree extracted from the remainder
+is compared against one extracted from the exact CORE-SG, over 54 combinations of
+data set and $\mpts$ on \texttt{sift1m}, \texttt{fma\_mfcc} and
+\texttt{glove100} at $n$ of $2.5\times10^4$, $5\times10^4$ and $10^5$. Both arms
+hold the $k$-NN half exact, so the omitted edges are the only difference.
 
-\textbf{Ambient dimensionality does not predict the threshold.}
-\texttt{20ng\_tfidf} at $d=1000$ connects at $\kmax=4$; \texttt{gist1m} at
-$d=960$ requires $\kmax=24$. The distinguishing factor is whether the data
-contain genuinely density-separated components that each hold many points, a
-property that our synthetic family has by construction and that real data, at
-these scales, largely lack.
+\begin{table}[!t]
+\caption{Dropping $\mathrm{MST}_{\kmax}$ from \eqref{eq:coresg} on connected
+$k$-NN graphs: worst value over 54 combinations of data set and $\mpts$,
+$\kmax = 32$, both arms sharing an exact $k$-NN half.}
+\label{tab:knnonly}
+\centering
+\footnotesize
+\begin{tabular}{@{}lr@{}}
+\toprule
+quantity & worst observed \\
+\midrule
+MST weight ratio, $k$-NN only over exact & 1.000005 \\
+shared edges, Jaccard                    & 0.9994 \\
+largest single merge-height difference   & 0.304 \\
+DBSCAN* ARI                              & 1.0000 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\textbf{The connectivity is not an artifact of approximation.} It is not a
-residual NN-Descent error in the form of long cross-component edges that connect
-a graph that an exact $k$-NN construction would leave in pieces. At the
-operating $\kmax$, the exact graph on \texttt{manifold\_c24} yields 24
-components, and the approximate graph yields 27 to 29, because a missed neighbor
-removes an edge whereas a substituted one remains local. The effect reverses
-once $\kmax$ approaches the component size (\texttt{manifold\_c32} at
-$\kmax=64$: 30 approximate against 32 exact), so we state the claim narrowly.
+The omitted edges are there. In 22 of the 54 combinations the $k$-NN-only tree
+differs from the exact one on all three measures at once: the Jaccard falls below
+1, the largest merge-height difference rises above 0, and the total weight rises.
+Every one of the nine data sets shows the difference at $\mpts = \kmax$, and the
+two largest merge-height differences fall at $\mpts$ of 16 and 32. The effect on
+the flat clustering is nil in all 54, where ARI is 1.0000 throughout. This bounds
+the discrepancy on these data sets at these sizes and does not bound it in
+general; \eqref{eq:coresg} admits larger ones, and the synthetic sets that
+fragment are where the bridges do their work.
+
+The connectivity test is cheap enough to run first. Deriving the component
+labeling costs 0.08 to 3.5\,ms across our data sets, against 2.6 to 53\,ms for
+the bridge spanning tree. The labeling is the cheaper of the two on every data
+set measured, so testing connectivity and skipping the bridges when the graph is
+in one piece costs less than it saves, at the accuracy Table~\ref{tab:knnonly}
+reports.
+
+Ambient dimensionality does not predict the threshold. \texttt{20ng\_tfidf} at
+$d = 1000$ connects at $\kmax = 4$; \texttt{gist1m} at $d = 960$ requires
+$\kmax = 24$. What separates them is whether the data contain density-separated
+components that each hold many points, which our synthetic family has by
+construction and the real sets, at these sizes, largely lack.
+
+The connectivity is not an artifact of approximation, in the sense of residual
+NN-Descent error supplying long cross-component edges that an exact $k$-NN
+construction would not. At the operating $\kmax$ the exact graph on
+\texttt{manifold\_c24} yields 24 components and the approximate graph yields 27
+to 29, because a missed neighbor removes an edge whereas a substituted one stays
+local. The effect reverses once $\kmax$ approaches the component size
+(\texttt{manifold\_c32} at $\kmax = 64$: 30 approximate against 32 exact), so we
+state the claim only for the operating range.
 
 \subsection{Per-Device Memory Against Instance Count}
 \label{sec:memory}
@@ -1032,9 +1145,8 @@ devices, $f$ rises from 0.100 to 0.189 on \texttt{sift1m} and from 0.104 to
 
 An intermediate setting was measured on \texttt{sift1m}. At $\omega = 0.50$ the
 frontier lies between the two, and the shortest build of the whole grid is there:
-8.13\,s at 0.9694 recall and 84.1\,MB resident, $m = 8$. A configuration selected
-for wall clock alone therefore differs from one selected for recall at a given
-residency.
+8.13\,s at 0.9694 recall and 84.1\,MB resident, $m = 8$. The fastest
+configuration and the most accurate one at a given residency are not the same.
 
 \subsection{Construction at Scale}
 \label{sec:scale}
@@ -1163,10 +1275,9 @@ the two-set case the algorithm is derived for, the cross-block filter is worth
 time-quality curve than shortening the descent, by 9\% at recall 0.94, and no
 prefix length reaches the recall of the full-length scan.
 
-The pass is therefore not shortened at equal recall by any of the four
-scopings. Section~\ref{sec:overlap} reports the one measure that reduces it: the
-overlap fraction moves part of the work into the instance phase, which the
-devices execute.
+None of the four scopings shortens the pass at equal recall. What does reduce it
+is the overlap fraction of Section~\ref{sec:overlap}, which moves part of the
+work into the instance phase and onto the devices.
 
 \subsection{Comparison with a GPU Rebuild: cuML}
 \label{sec:cuml}
@@ -1309,9 +1420,9 @@ points.
 
 \textbf{The repair pass.} Partitioning leaves pairs in separate blocks
 uncompared, and the pass that recovers them is 79.1\% of a $5\times10^7$-point
-build and executes on the host. It is why the build's device-parallel fraction
-is 0.113 at that size while the instance phase alone scales by 3.80 on four
-devices. Four scopings were measured and none shortened it at equal recall. At
+build and executes on the host, which is why the build's device-parallel
+fraction is 0.113 at that size while the instance phase alone scales by 3.80 on
+four devices. Four scopings were measured and none shortened it at equal recall. At
 one round instead of five, recall falls from 0.9671 to 0.2219. It cannot be
 restricted to the nodes the merge changed, because a build starts from an empty
 graph and the merge changes all of them. Executing it as instances over
