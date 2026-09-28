@@ -125,7 +125,7 @@ Clustering at Scale}
 
 \begin{abstract}
 
-Density-based clustering methods such as HDBSCAN* rely on a smoothing parameter whose appropriate value is not known in advance, and evaluating several candidate values is expensive because each evaluation rests on a quadratic computation. The CORE-SG replacement graph removes the repetition: one graph, the union of a $k$-nearest-neighbor graph and a minimum spanning tree, serves every smoothing value up to a chosen maximum. Its construction is centralized, so the graph is built and stored on a single device and the largest data set that can be processed is bounded by the memory of that device. We reformulate the construction as a set of independent subproblems, called instances. An instance holds a block of points together with its own neighborhood state, references no global structure while it runs, and is scheduled onto any available accelerator without cross-device communication. The memory a device must hold is then set by the number of instances rather than by the number of points, so the instance count, not the accelerator, is what a larger data set requires. Partitioning leaves pairs in separate blocks uncompared; a repair pass over the merged graph recovers them, and an overlap between blocks moves part of that pass from the host onto the devices. The minimum spanning tree is replaced by an anti-hub bridge estimate: the edges the neighborhoods cannot supply are those bridging density-separated components, such bridges leave component borders, and borders are identified by the lowest locally normalized reverse degree. The set spanned is sized by dimensionality and edge count rather than by the number of points. Per-device memory falls in proportion to the instance count and stays constant as the data set grows, the estimated spanning trees yield flat clusterings identical to those of the exact trees, and the construction processes data sets that exhaust the device under a GPU implementation of HDBSCAN*.
+Density-based clustering methods such as HDBSCAN* rely on a smoothing parameter whose appropriate value is not known in advance, and evaluating several candidate values is expensive because each evaluation rests on a quadratic computation. The CORE-SG replacement graph removes the repetition: one graph, the union of a $k$-nearest-neighbor graph and a minimum spanning tree, serves every smoothing value up to a chosen maximum. Its construction is centralized, so the graph is built and stored on a single device and the largest data set that can be processed is bounded by the memory of that device. We reformulate the construction as a set of independent subproblems, called instances. An instance holds a block of points together with its own neighborhood state, references no global structure while it runs, and is scheduled onto any available accelerator without cross-device communication. The memory a device must hold is then set by the number of instances, not by the number of points, so the instance count is what a larger data set requires of the implementation. Partitioning leaves pairs in separate blocks uncompared; a repair pass over the merged graph recovers them, and an overlap between blocks moves part of that pass from the host onto the devices. The minimum spanning tree is replaced by an anti-hub bridge estimate: the edges the neighborhoods cannot supply are those bridging density-separated components, such bridges leave component borders, and borders are identified by the lowest locally normalized reverse degree. The set spanned is sized by dimensionality and edge count, independently of the number of points. Per-device memory falls in proportion to the instance count and stays constant as the data set grows, the estimated spanning trees yield flat clusterings identical to those of the exact trees, and the construction processes data sets that exhaust the device under a GPU implementation of HDBSCAN*.
 
 \end{abstract}
 
@@ -144,7 +144,7 @@ minimum spanning tree, nearest neighbor graph, parallel algorithms
 % ===========================================================================
 \IEEEPARstart{D}{ensity-based} clustering methods such as HDBSCAN* transform pairwise distances using local density estimates governed by a smoothing parameter, $\mpts$, whose appropriate value is generally not known in advance. When different components exhibit different densities, a single value of $\mpts$ may not adequately characterize the entire data set. It is therefore common to evaluate multiple candidate values and inspect the resulting hierarchies. This parameter sweep is computationally expensive. For each value of $\mpts$, the clustering is determined by a minimum spanning tree (MST) of the complete mutual-reachability graph, whose construction requires $O(n^2 d)$ time.
 
-The CORE-SG replacement graph \cite{coresg} removes this repeated quadratic cost. A single graph, built once, provably contains an MST of the complete mutual-reachability graph for every $\mpts \le \kmax$. A clustering can therefore be extracted by reweighting only $O(n\kmax)$ edges and computing an MST over this reduced graph, rather than reconstructing the quadratic graph for each parameter value.
+The CORE-SG replacement graph \cite{coresg} removes this repeated quadratic cost. A single graph, built once, provably contains an MST of the complete mutual-reachability graph for every $\mpts \le \kmax$. A clustering can therefore be extracted by reweighting only $O(n\kmax)$ edges and computing an MST over this reduced graph, with no quadratic graph reconstructed for any parameter value.
 
 The construction itself follows a centralized execution model. Graph construction and storage are not partitioned across accelerators, so computation and memory are concentrated on a single device. The largest data set that can be processed is then bounded by the memory of that device, independently of how many are available. On the hardware used here, a single-instance build of a $128$-dimensional data set at $\kmax = 32$ requires 944 bytes per point, placing the ceiling near $9.1\times10^6$ points on an 8 GB accelerator.
 
@@ -257,9 +257,9 @@ symmetric merge performs that reduction by truncating each neighbor list,
 refilling the freed slots with candidates drawn from the other graph, and
 descending only on pairs that cross the two graphs. Our decomposition is that
 same partition. The differences are that the $m$ subgraphs are merged into the
-global lists in one pass rather than pairwise, that an instance carries an
+global lists in one pass instead of pairwise, that an instance carries an
 overlap sample so the blocks share a reference set, and that the object under
-construction is a CORE-SG rather than a $k$-NN graph alone.
+construction is a CORE-SG and not a $k$-NN graph alone.
 Section~\ref{sec:repaircost} measures their symmetric merge in place of our
 repair pass.
 
@@ -340,8 +340,7 @@ Algorithm~\ref{alg:knn} gives the first half and Algorithm~\ref{alg:bridges} the
 \end{tikzpicture}
 \caption{The construction pipeline. Instances are independent subproblems and
 are the unit of parallelism. The merge, the repair pass and the bridge spanning
-tree are global; the bridge tree spans $\lceil d\ln|E|\rceil$ nodes rather than
-$n$.}
+tree are global; the bridge tree spans $\lceil d\ln|E|\rceil$ nodes, not $n$.}
 \label{fig:pipeline}
 \end{figure}
 
@@ -443,11 +442,9 @@ list, which makes the result independent of the order the instances complete in.
 Partitioning leaves every pair whose two points share no instance uncompared, so
 the merged graph omits neighbors that a single undivided descent would have
 found. A repair pass, a further NN-Descent over the merged graph, recovers them.
-This pass exists solely as a consequence of partitioning: at $m = 1$ the descent
-result is adopted directly and no repair is performed.
-
-The repair operates over the whole graph. Its cost and the constraints on its
-scope are examined in Section~\ref{sec:repaircost}.
+At $m = 1$ the descent result is adopted directly and no repair runs. The pass
+operates over the whole graph; Section~\ref{sec:repaircost} examines its cost and
+the constraints on its scope.
 
 \subsection{The MST: Anti-Hub Bridges}
 \label{sec:bridges}
@@ -544,7 +541,7 @@ arrive.
 Two implementation properties are important. The hubness index attaches to
 the $k$-NN graph as an observer, so every inserted or evicted directed edge
 updates a reverse degree in $O(1)$ and marks the affected nodes; a refresh
-rescores only the affected region rather than all $n$ nodes. The index also
+rescores only the affected region instead of all $n$ nodes. The index also
 maintains the reverse neighborhoods themselves, not only the reverse degrees.
 This makes score propagation exact. The cost of this choice is one integer per
 directed edge; it may be disabled, in which case propagation falls back to an
@@ -615,8 +612,7 @@ against the \emph{exact} CORE-SG, an exact $k$-NN graph by brute force plus an
 exact $\mathrm{MST}_{\kmax}$, since the question is whether the estimate matches
 the spanning tree it replaces. $k$-NN recall is scored against an exact
 brute-force $k$-NN graph over the points present. Above $n = 2\times10^5$ that
-reference is sampled rather than exhaustive, as Section~\ref{sec:metrics}
-describes.
+reference is sampled, as Section~\ref{sec:metrics} describes.
 
 One comparison uses the single-instance build as its reference instead. The
 effect under test there is the cost of \emph{partitioning}: what changes in the
@@ -669,8 +665,7 @@ total, which is the parallel fraction of Amdahl's law \cite{amdahl}.
 
 We deliberately do \emph{not} report edge overlap between spanning trees. All
 MSTs of a graph share a weight multiset, and for any threshold the components of
-the sub-threshold edge set depend on the graph rather than on which MST was
-extracted. Consequently, two different MSTs induce very similar single-linkage hierarchies.
+the sub-threshold edge set depend on the graph, not on which MST was extracted. Consequently, two different MSTs induce very similar single-linkage hierarchies.
 Measured on our system, overlap collapses from 0.99 to 0.19 as $\mpts$ rises
 from 1 to 32 while ARI remains exactly 1.0000, because raising $\mpts$ flattens
 the mutual-reachability landscape into plateaus of tied weights and any
@@ -678,17 +673,17 @@ tie-break yields a different but equally optimal tree.
 
 \subsection{Data Sets}
 
-Table~\ref{tab:datasets} lists three families, plus a \textbf{scale} family
-used only in Section~\ref{sec:scale} and in the single-instance capacity probe.
+Table~\ref{tab:datasets} lists three families, plus a scale family used only
+in Section~\ref{sec:scale} and in the single-instance capacity probe.
 The scale sets are synthetic, generated at $d = 32$ with intrinsic
 dimensionality 8, 200 clusters and a fixed separation, at sizes from $10^7$ to
 $5\times10^7$ points; they exist because no public data set we had access to
-reaches those sizes. \textbf{Real-paper} sets
+reaches those sizes. Real-paper sets
 reproduce the recipes of \cite{coresg} for comparability, using FMA \cite{fma}
-and 20 Newsgroups \cite{newsgroups}. \textbf{Real-scale} sets exercise scale,
+and 20 Newsgroups \cite{newsgroups}. Real-scale sets exercise scale,
 high dimensionality, and a non-Euclidean metric: SIFT1M and GIST1M
 \cite{sift_gist}, and GloVe \cite{glove} under cosine distance.
-\textbf{Manifold} sets are synthetic, generated in a low dimensionality and
+Manifold sets are synthetic, generated in a low dimensionality and
 rotated into a high-dimensional space by a random orthonormal map. This preserves every
 pairwise distance exactly, so component structure and separation remain unchanged
 while ambient dimensionality increases and intrinsic dimensionality is known by
@@ -739,19 +734,19 @@ scale      & \texttt{scale10000000} & 10{,}000{,}000 & 32 & 32 & n/a \\
 
 \subsection{Baselines}
 
-The primary internal baseline is the \textbf{single-instance build}, $m = 1$.
+The primary internal baseline is the single-instance build, $m = 1$.
 It performs no partition and therefore no repair, and it is the configuration a
 centralized construction corresponds to. Every instance count is charged against
 it on the same data, the same seed and the same device count, so the ratio
 isolates the cost of decomposition from every other difference.
 
-Our external baseline is \textbf{NVIDIA cuML} \cite{cuml}, which provides a
+Our external baseline is NVIDIA cuML \cite{cuml}, which provides a
 GPU implementation of HDBSCAN*. Wall-clock time is comparable here: both
 implementations are CUDA and run on the same device. cuML serves one $\mpts$ per fit, so the multiple-$\mpts$ property of the
 CORE-SG has no equivalent there and is reported separately.
 
-Quality is measured against the \textbf{exact CORE-SG} throughout, as
-Section~\ref{sec:groundtruth} describes, rather than against class labels.
+Quality is measured against the exact CORE-SG throughout, as
+Section~\ref{sec:groundtruth} describes, and never against class labels.
 
 The candidates we considered and excluded address a different axis.
 I-HASTREAM \cite{ihastream} maintains a hierarchy over micro-clusters, and Data
@@ -761,8 +756,8 @@ error introduced by summarization with the error introduced elsewhere.
 FISHDBC \cite{fishdbc} maintains a density-based structure under insertion and
 serves a single $\mpts$. MapReduce HDBSCAN* \cite{mrhdbscan}, accelerated
 HDBSCAN* \cite{acceleratedhdbscan} and hybrid CPU/GPU DBSCAN \cite{bpshdbscan}
-distribute a single-parameter clustering rather than a structure serving a range
-of $\mpts$. We also do not benchmark against approximate $k$-NN graph libraries,
+distribute a single-parameter clustering, not a structure serving a range of
+$\mpts$. We also do not benchmark against approximate $k$-NN graph libraries,
 because this work does not claim a faster $k$-NN graph; it \emph{uses}
 NN-Descent \cite{nndescent, dynamic_nndescent} and contributes a decomposition
 of the construction. A recall check against brute force establishes that the
@@ -845,8 +840,8 @@ set at $10^7$: $n - 1$ edges and exactly one component in all 480 extractions.
 \label{sec:connectivity}
 
 Fig.~\ref{fig:components} reports the component count of the $k$-NN graph alone
-as a function of $\kmax$. \textbf{Every real data set we examined connects
-within the operating range of 24 to 32}, which is the range of this work and of
+as a function of $\kmax$. Every real data set we examined connects within the
+operating range of 24 to 32, which is the range of this work and of
 \cite{coresg}; \texttt{gist1m} requires $\kmax = 24$ and \texttt{fma\_chroma}
 requires $\kmax = 32$. In contrast, the synthetic manifold sets do not connect
 at any $\kmax$ in the range, which is why they are included.
@@ -1128,13 +1123,11 @@ The $\omega = 1.00$ arm holds less on the device and reaches higher recall in
 all seven pairs: by 0.0029 to 0.0152 on \texttt{sift1m} and by 0.0281 to 0.0544
 on \texttt{glove100}. Total time falls in five of the seven and rises in two.
 
-The time behavior follows from where each phase runs. Across the seven pairs the
-repair pass is 2.5\% to 30.0\% shorter at $\omega = 1.00$, and the instance phase
-is 72\% to 87\% longer. The repair pass executes on the host and the instance
-phase on the devices, so the exchange is favorable only when there are devices
-to divide the larger phase across. At $m = 64$ on \texttt{sift1m}, one GPU takes
-13.41\,s at $\omega = 0.05$ and 15.77\,s at $\omega = 1.00$; four GPUs take
-10.26\,s and 10.03\,s.
+Across the seven pairs the repair pass is 2.5\% to 30.0\% shorter at
+$\omega = 1.00$ and the instance phase 72\% to 87\% longer, so the exchange pays
+only when there are devices to divide the larger phase across. At $m = 64$ on
+\texttt{sift1m}, one GPU takes 13.41\,s at $\omega = 0.05$ and 15.77\,s at
+$\omega = 1.00$; four GPUs take 10.26\,s and 10.03\,s.
 
 Raising $\omega$ also raises the share of the build the devices execute. At
 $m \ge 8$ the instance phase scales by 3.83 to 3.87 on four devices at
@@ -1405,8 +1398,7 @@ $8\times10^6$ points of 32 dimensions. Once built, the graph answers one
 $\mpts$ in 0.853\,s at $10^6$ points against 180.03\,s for one cuML fit, and the
 whole sweep over 32 values in 1.08 to 1.72 times the build.
 
-Instance overlap sets how much of the work falls on the devices rather than the
-host. Doubling the instance count alongside the overlap holds per-device
+Instance overlap sets how much of the work the devices absorb. Doubling the instance count alongside the overlap holds per-device
 residency and raises recall in every pair measured, by 0.0029 to 0.0152 on
 \texttt{sift1m} and 0.0281 to 0.0544 on \texttt{glove100}, and raises the
 instance phase's scaling on four devices to 3.94--3.99 against 3.83--3.87 at the
@@ -1418,58 +1410,111 @@ The bridge estimate spans $\lceil d \ln |E| \rceil$ nodes. Its trees are at most
 10.5 to 36 times less cost, and the spanning step is 0.07\,s at $5\times10^7$
 points.
 
-\textbf{The repair pass.} Partitioning leaves pairs in separate blocks
-uncompared, and the pass that recovers them is 79.1\% of a $5\times10^7$-point
-build and executes on the host, which is why the build's device-parallel
-fraction is 0.113 at that size while the instance phase alone scales by 3.80 on
-four devices. Four scopings were measured and none shortened it at equal recall. At
-one round instead of five, recall falls from 0.9671 to 0.2219. It cannot be
-restricted to the nodes the merge changed, because a build starts from an empty
-graph and the merge changes all of them. Executing it as instances over
-locality-grown blocks stages 2.4 to 6.3 times $n$ nodes, since a $k$-NN graph in
-$128$ dimensions admits no partition whose blocks have small boundaries. Run as
-the symmetric merge of \cite{knn_merge}, the truncation of the candidate scan
-accounts for the entire saving at eight instances, and no prefix length reaches
-the recall of the full-length scan. What does reduce the pass is the overlap
-fraction, which relocates part of the work to the devices rather than removing
-it.
+\subsection{Future Work}
 
-A global pass on the device requires the whole graph resident, which is the
-condition under which partitioning is unnecessary: at $d = 128$ and
-$\kmax = 32$ a single instance occupies 944 bytes per point, so a graph below
-$9.1\times10^6$ points fits on an 8\,GB accelerator and is built at $m = 1$ with
-no repair at all. Sharding the graph across devices with peer access would
-place the aggregate graph in device memory without placing it on any one card;
-this changes the assumption that instances never communicate, and the
-communication cost over PCIe is untested here.
+\subsubsection{The repair pass}
 
-\textbf{Reducing the parameter surface.} The method exposes an instance count,
-a repair budget, an overlap fraction, an anti-hub multiplier, a per-component
-quota and a bridge cost ceiling. The largest resident instance is
+The repair pass is the open problem in the construction. It takes 79.1\% of a
+$5\times10^7$-point build and runs on the host, which holds the device-parallel
+fraction at 0.113 while the instance phase alone scales by 3.80 on four devices.
+Section~\ref{sec:repaircost} reports four attempts to shorten it, none of which
+succeeded at equal recall, and raising the overlap relocates part of it onto the
+devices without making it smaller.
+
+Two directions remain. A device-side pass needs the whole graph resident, which
+is the regime where partitioning is unnecessary: at $d = 128$ and $\kmax = 32$ an
+instance occupies 944 bytes per point, so a graph below $9.1\times10^6$ points
+fits an 8\,GB accelerator and builds at $m = 1$ with no repair at all. Sharding
+the graph across devices with peer access would place the aggregate graph in
+device memory without placing it on any one card. That gives up the assumption
+that instances never communicate, and the traffic it would introduce is not
+measured here.
+
+\subsubsection{The parameter surface}
+
+The method exposes an instance count, an overlap fraction, a repair budget, an
+anti-hub multiplier, a per-component quota and a bridge cost ceiling. Two of
+these are already determined by the hardware. The largest resident instance is
 $(1 + \omega)(4\,\mathrm{stride} + 8k + s)\,n/m$ bytes
-\eqref{eq:instancesize}, \eqref{eq:devicecost}, so the pairs of instance count
-and overlap that fit a given accelerator are computable rather than tuned. Among
-those pairs, Tables~\ref{tab:memory} and~\ref{tab:overlap} select the one with
-the smallest instance count and the largest overlap. Whether the remaining four
-parameters need to be exposed at all is open.
+\eqref{eq:instancesize}, \eqref{eq:devicecost}, so the pairs of $m$ and $\omega$
+that fit a given accelerator can be computed, and Tables~\ref{tab:memory}
+and~\ref{tab:overlap} point within that set to the smallest $m$ at the largest
+$\omega$.
 
-\textbf{Extension without rebuilding.} The instance abstraction does not require
-that a block be new. An instance whose context is drawn from an existing graph
-extends that graph rather than building one, and the cost of such an update is
-bounded by the block rather than by $n$ when the context is taken from the
-neighborhoods that a search over the existing graph returns. Preliminary
-measurements place the descended node count at 75{,}933 for a graph growing from
-$1.1\times10^5$ to $10^6$ points, against $1.07\times10^6$ for a uniformly drawn
-context, with ARI against a full rebuild between 0.927 and 0.995. That search
-executes on the host and is 63\% of one update at $n = 5\times10^5$; moving it
-to the device, and handling deletion and distributional drift, are the open
-questions in that direction.
+The anti-hub count has a defect we can state precisely. The budget
+$\lceil d \ln|E| \rceil$ uses the ambient dimensionality, and the bridge spanning
+tree costs $O(m^2 d)$ for $m$ selected nodes with $m \propto d$, so its cost
+grows as $d^3$. On \texttt{gist1m} ($d = 960$), \texttt{20ng\_tfidf}
+($d = 1000$) and \texttt{20ng\_pca500} ($d = 500$) the budget reaches every point
+in the data set, and the estimate degenerates into the exact spanning tree it was
+introduced to avoid.
 
-\textbf{Multi-node execution.} An instance references no global state during
-execution, so the scheduler that assigns instances to devices on one node
-carries over to instances assigned to nodes. The merge and the bridge spanning
-tree are the two global steps, and both operate on objects smaller than the
-data set.
+Substituting an intrinsic-dimensionality estimate for $d$ addresses the cause.
+The estimate is 10.3 on \texttt{sift1m} against an ambient 128, and 24.1 on
+\texttt{gist1m} against 960. At four times that estimate the selected fraction
+falls to 0.28--0.47 on the three degenerate sets and 0.04--0.17 on the rest, for
+2.1 to 8.7 times less bridge time. The cost appears where the bridges carry the
+result: on \texttt{manifold\_c24} and \texttt{manifold\_c32} the weight ratio
+rises from 1.00016 and 1.00017 to 1.00276 and 1.00407. Fixing the multiplier that
+holds quality at the reduced cost, and deciding whether the cost ceiling is still
+needed once the budget tracks intrinsic dimensionality, would remove two
+parameters and repair a third.
+
+\subsubsection{Streaming updates}
+
+The construction assumes the data set is fixed and available in full. When points
+instead arrive over time, a graph can be rebuilt at a cost that grows with the
+accumulated $n$, or extended at a cost that grows with the arriving batch. The
+instance abstraction admits the second: nothing requires a block to be new, and
+an instance whose context is drawn from an existing graph extends that graph.
+
+Which of the two costs applies depends on how the context is chosen. The
+quantity that decides it is the number of nodes staged into the update's
+instances, counting the new points and whatever existing neighborhoods are
+brought in beside them. An update that stages the whole graph is a rebuild under
+another name. Drawing the context uniformly from the existing graph does exactly
+that: on \texttt{sift1m} the staged count tracks $n$, from $5.69\times10^5$ nodes
+at $n = 5.1\times10^5$ to $1.07\times10^6$ at $n = 10^6$. Drawing it from the neighborhoods that a beam search over the existing
+graph returns for each new point stages 75{,}933 nodes at every batch across that
+same range, set by the batch and flat in $n$. Flat clusterings agree with a full
+rebuild at ARI 0.992 to 0.995.
+
+The search is the part that has not been distributed. It runs on the host and
+accounts for half to two thirds of one insert, 51\% at $n = 10^6$, so moving it
+to the device is the speed-up available there. Deletion and distributional drift
+are both untreated: under drift the arriving points stop resembling the graph the
+search navigates, and neither the cost nor the quality of an update in that
+regime is measured here.
+
+\subsubsection{Multi-node execution}
+
+Distributing across nodes is governed by which steps need shared memory. The
+instance phase does not. An instance references no global state while it runs, so
+the scheduler that assigns instances to devices on one node assigns them to nodes
+unchanged, and the staging cost is the only thing that grows. The merge and the
+repair pass both write to the global top-$\kmax$ lists, which on one node sit in
+shared host memory and across nodes do not.
+
+The merge admits a direct partition. The lists divide by point identifier, one
+contiguous range per node, and each instance routes its output to the node
+owning the lists it touches. For $P$ nodes that is $O(n\kmax/P)$ candidate edges
+received per node, and because insertion into a sorted top-$\kmax$ list is
+order-independent, the exchange needs no synchronization beyond its own
+completion.
+
+The repair pass does not admit one. It descends over the whole graph, and the
+locality-block measurement of Section~\ref{sec:repaircost} is the obstacle: a
+$k$-NN graph at $d = 128$ has no partition whose blocks have small boundaries,
+so a node-partitioned descent would exchange a multiple of $n$ per round. Two
+routes around it are open. The repair can be run on a partition that cuts many
+edges and accept the recall those cuts cost, which the block-closure measurement
+bounds at 0.8748 for four blocks and 0.6088 for sixteen. Or the overlap can be
+raised until the residual repair is small enough for one node to absorb, trading
+device memory on every node for the exchange. Which is cheaper depends on the
+interconnect, and neither is measured here.
+
+The bridge step does not constrain the design. It selected 676 nodes at
+$5\times10^7$ points, which one node can gather and span.
 
 % ===========================================================================
 \section*{Acknowledgment}
