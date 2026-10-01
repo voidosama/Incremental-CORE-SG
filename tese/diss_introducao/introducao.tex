@@ -1,0 +1,110 @@
+% ---
+% Capitulo de Introducao
+% ---
+
+\chapter{Introdução\label{cha:intro}}
+
+A análise de dados é o processo de examinar um conjunto de observações com o objetivo de descrever a estrutura que o organiza, extrair dele informação que não está explícita nos registros individuais, e sustentar decisões a partir dessa informação. Ela permeia praticamente toda atividade que produz registros em volume, da detecção de intrusões em redes \cite{network-intrusion-detection} à identificação de anomalias em processos de manufatura \cite{manufacturing-anomaly-detection}, passando pela separação de objetos astronômicos em levantamentos fotométricos \cite{star-galaxy-separation}, pela previsão de geração eólica \cite{wind-power-prediction} e pelo monitoramento de processos industriais de soldagem \cite{welding-curve-discovery}. Sua importância cresce na proporção em que os dados crescem: quanto maior o volume registrado, menor a fração dele que pode ser inspecionada manualmente, e maior a dependência de métodos que descrevam a estrutura do conjunto sem que ela precise ser conhecida de antemão.\\
+
+Dentro da análise de dados, o agrupamento é a tarefa de particionar as observações em conjuntos coesos, e os métodos baseados em densidade formam uma família particularmente adequada à análise exploratória. Eles definem um grupo como uma região do espaço em que as observações se concentram acima de um limiar de densidade, e tratam como ruído aquilo que não atinge esse limiar. Essa definição confere três propriedades úteis. Primeiro, o número de grupos não precisa ser informado, pois decorre da própria distribuição. Segundo, os grupos não são restritos a formas convexas ou esféricas, o que permite capturar estruturas alongadas, aninhadas ou irregulares. Terceiro, o ruído é definido explicitamente, evitando se tornar um resíduo forçado a pertencer a algum grupo. Essas propriedades tornam os métodos baseados em densidade aplicáveis a tarefas que vão além do agrupamento propriamente dito, como discriminação de ruído, classificação, regressão e modelagem \cite{framework-density-clustering}.\\
+
+O representante mais conhecido dessa família é o \ac{DBSCAN} \cite{dbscan}, que qualifica cada objeto com base na quantidade de vizinhos dentro de um raio $\varepsilon$ e conecta objetos densamente alcançáveis entre si. Seu sucessor hierárquico, o \ac{HDBSCAN*} \cite{hdbscan}, elimina a necessidade de fixar $\varepsilon$ ao construir a hierarquia completa dos agrupamentos obtidos para todos os valores possíveis desse limiar, deixando apenas um parâmetro livre, o $\mpts$, que define quantos vizinhos são considerados na estimativa de densidade local. Foi demonstrado que toda essa família pode ser descrita como instâncias de um mesmo arcabouço, cuja operação central é o cálculo da árvore geradora mínima (\ac{MST}) de um grafo completo em um espaço transformado \cite{framework-density-clustering}, em que o peso de cada aresta é uma estimativa de quão densamente conectados estão os dois objetos que ela liga. A hierarquia do \ac{HDBSCAN*}, os agrupamentos do \ac{DBSCAN} e as demais tarefas derivadas são todos extraíveis dessa única árvore.\\
+
+Essa constatação expõe, contudo, um custo prático. O $\mpts$ não pode ser escolhido de forma principiada antes de olhar para os dados, e nenhum valor único é apropriado para conjuntos cujos grupos diferem em densidade, o que é comum. É usual, portanto, executar o método várias vezes e comparar as hierarquias resultantes. Como cada valor de $\mpts$ define um espaço transformado diferente, cada execução exige uma nova \ac{MST} sobre um grafo completo, ao custo de $O(n^2 d)$ para $n$ objetos de dimensionalidade $d$. O \ac{CORE-SG} \cite{core-sg} remove essa barreira. Ele é um grafo único, construído uma só vez, formado pela união do grafo de $k$ vizinhos mais próximos, o \ac{k-NNG}, com uma \ac{MST} calculada no maior valor de interesse do parâmetro, denotado $\kmax$. Seus autores demonstram que esse grafo contém uma \ac{MST} do grafo completo para todo $\mpts \leq \kmax$, de modo que extrair o resultado para um valor específico do parâmetro se reduz a repesar $O(n\kmax)$ arestas já armazenadas e executar um algoritmo de árvore geradora mínima sobre elas. Uma varredura inteira sobre o parâmetro passa a custar aproximadamente o mesmo que uma única execução do método original.\\
+
+% ---
+\section{O problema\label{sec:problem-statement}}
+% ---
+
+O \ac{CORE-SG} resolve o custo de \emph{repetir} a análise, mas não altera o custo de \emph{construir} a estrutura uma primeira vez. E é na construção que reside a limitação que este trabalho ataca.\\
+
+A construção original segue um modelo de execução centralizado. Os dois grafos constituintes são calculados e armazenados em um único espaço de memória, sobre o conjunto de dados inteiro, de uma só vez. Em particular, a \ac{MST} que compõe a segunda metade é definida sobre um grafo completo, o que impede que sua construção seja distribuída sem materializar ou percorrer $O(n^2)$ pares. O resultado é que o maior conjunto de dados que pode ser processado é determinado pela memória de uma única máquina, e não pela quantidade de máquinas disponíveis.\\
+
+Essa limitação é particularmente severa em aceleradores gráficos. A operação dominante na construção do \ac{k-NNG} é o cálculo de distâncias entre pares de pontos, que é aritmeticamente densa, regular e independente entre pares --- exatamente o perfil de carga para o qual uma \ac{GPU} oferece sua maior vantagem sobre uma \ac{CPU}. Existe, porém, uma assimetria entre os dois recursos que o acelerador oferece. Poder de cálculo é um recurso elástico: se a máquina é lenta, espera-se mais. Memória de dispositivo não é: se a estrutura não cabe, nenhuma quantidade de tempo resolve. Aceleradores típicos oferecem entre 8 e 80 GB de memória, uma ordem de grandeza abaixo da memória principal de um servidor comum, e essa diferença não tem acompanhado o crescimento do poder de cálculo. Em um método cuja estrutura intermediária cresce linearmente com $n$ e com $\kmax$, a memória do dispositivo é, portanto, o recurso que primeiro se esgota.\\
+
+A consequência prática é um teto abrupto. Em uma construção de instância única com $d = 128$ e $\kmax = 32$, cada ponto ocupa 944 bytes no dispositivo, o que coloca o limite em torno de $9{,}1 \times 10^6$ pontos em um acelerador de 8 GB. Abaixo desse teto, a construção é rápida; acima dele, ela não executa. E, de modo contraintuitivo, acrescentar aceleradores ao sistema não move o teto: como a construção não é decomposta, um segundo dispositivo não contribui com sua memória, apenas permaneceria ocioso. O conjunto de dados que não cabe em uma \ac{GPU} continua não cabendo em quatro.\\
+
+É esse o problema que este trabalho ataca: \textbf{a construção do \ac{CORE-SG} é limitada pela memória de um único dispositivo, e essa limitação não é contornada pela adição de dispositivos}. A questão não é tornar a construção mais rápida --- embora a velocidade importe --- mas tornar possível construir, com os aceleradores disponíveis, grafos que hoje não podem ser construídos de forma alguma.\\
+
+% ---
+\section{Questões de pesquisa\label{sec:research-questions}}
+% ---
+
+O problema acima se desdobra em quatro questões, que organizam o restante do texto.\\
+
+\textbf{QP1. É possível decompor a construção do \ac{CORE-SG} em subproblemas cuja memória individual seja controlável de forma independente do tamanho do conjunto de dados?} Uma decomposição útil precisa satisfazer duas condições simultâneas. A memória que cada subproblema exige deve ser função de um parâmetro sob controle do usuário, e não de $n$; e os subproblemas devem ser suficientemente autocontidos para que possam ser despachados a qualquer acelerador disponível sem comunicação entre dispositivos durante a execução, pois a comunicação entre aceleradores reintroduziria, pela porta dos fundos, o acoplamento que a decomposição existe para eliminar.\\
+
+\textbf{QP2. Qual é o custo dessa decomposição em qualidade, e esse custo é controlável?} Particionar um conjunto de dados para construir um grafo de vizinhança significa deixar de comparar todo par cujos dois pontos caiam em partes distintas. O grafo resultante é, portanto, uma aproximação pior do que aquela produzida por uma construção não particionada sobre os mesmos dados. É necessário quantificar essa perda, identificar o mecanismo que a recupera, e determinar se existe um parâmetro que permita ao usuário escolher sua posição na curva entre memória e qualidade.\\
+
+\textbf{QP3. A segunda metade do \ac{CORE-SG}, a árvore geradora mínima, pode ser substituída por uma estimativa cujo custo não dependa de $n$?} Mesmo que o \ac{k-NNG} seja decomposto com sucesso, a \ac{MST} sobre o grafo completo permanece como um componente centralizado e quadrático. Se a estrutura inteira deve escalar, essa metade precisa ou ser distribuída, ou ser substituída por algo cujo custo seja governado por outra grandeza que não o número de pontos.\\
+
+\textbf{QP4. O que a decomposição custa em tempo, e o que ela oferece em contrapartida?} Uma construção decomposta executa trabalho que uma construção monolítica não executa: a partição, a mesclagem dos resultados parciais e a recuperação dos pares não comparados. É preciso medir esse sobrecusto, determinar que fração da construção escala com a quantidade de aceleradores, e situar o resultado em relação às alternativas disponíveis.\\
+
+% ---
+\section{Abordagem e contribuições\label{sec:contributions}}
+% ---
+
+A decisão central deste trabalho é tratar os dois grafos constituintes do \ac{CORE-SG} como problemas separados, porque eles falham por razões diferentes e admitem soluções diferentes. O \ac{k-NNG} é decomponível, mas sua decomposição custa qualidade; a \ac{MST} não é decomponível de forma barata, mas pode ser substituída por uma estimativa. Tratá-los em conjunto obrigaria a aceitar a pior restrição de cada um.\\
+
+Para o \ac{k-NNG}, a construção é reformulada como um conjunto de subproblemas independentes, chamados \emph{instâncias}. Uma permutação aleatória dos pontos é cortada em $m$ blocos; cada bloco, acrescido de uma amostra de sobreposição extraída dos demais blocos, forma uma instância. Uma instância reúne seus próprios vetores e suas próprias listas de vizinhança, não acessa nenhuma estrutura global durante a execução, e pode portanto ser despachada a qualquer acelerador disponível sem comunicação entre dispositivos. A memória que um dispositivo precisa manter passa a ser determinada pela quantidade de instâncias, e não pela quantidade de pontos, o que responde à QP1: processar um conjunto de dados maior passa a exigir elevar $m$, e não adquirir um acelerador maior.\\
+
+O particionamento deixa pares não comparados, e um passo de reparo sobre o grafo mesclado os recupera. Esse passo é o custo real da decomposição, e sua análise ocupa parte substancial deste texto. A amostra de sobreposição é o parâmetro que responde à QP2: elevá-la faz com que parte dos pares que cruzariam fronteiras seja comparada dentro das instâncias, o que desloca trabalho do reparo, executado na \ac{CPU}, para a fase de instâncias, executada nos dispositivos.\\
+
+Para a \ac{MST}, o trabalho substitui o cálculo exato por uma estimativa, respondendo à QP3. A observação que a justifica é que as únicas arestas que a vizinhança não é capaz de fornecer são aquelas que ligam componentes separados por densidade, e que tais arestas partem necessariamente das bordas desses componentes, pois um ponto interior sempre tem um vizinho mais próximo na direção do percurso. Estimar bordas por meios geométricos é impraticável em alta dimensionalidade, mas elas podem ser estimadas diretamente por uma estatística de \textit{hubness} invertida e normalizada localmente: o grau reverso de um vértice, isto é, quantos outros vértices o listam como vizinho, dividido pelo grau reverso médio de seus próprios vizinhos. Conectar apenas os vértices de menor pontuação nessa estatística é suficiente, e o tamanho desse conjunto é fixado pela dimensionalidade e pela quantidade de arestas do grafo, não pelo número de pontos.\\
+
+As contribuições deste trabalho são, portanto:\\
+
+\begin{enumerate}
+    \item \textbf{Uma decomposição da construção do \ac{k-NNG} em instâncias independentes}, cuja residência por dispositivo é função da quantidade de instâncias e não do tamanho do conjunto de dados, acompanhada da caracterização do que essa decomposição custa em qualidade e de um parâmetro que controla esse custo (Capítulos \ref{cha:methods} e \ref{cha:results});
+
+    \item \textbf{Uma estimativa da metade de árvore geradora por pontes anti-hub}, cujo conjunto abrangido é dimensionado pela dimensionalidade e pela quantidade de arestas, e não pelo número de pontos, com avaliação contra a árvore exata que ela substitui (Seções \ref{sec:bridges} e \ref{sec:res-bridges});
+
+    \item \textbf{Uma caracterização empírica dos limites do método}, incluindo quatro estratégias de redução do passo de reparo que foram medidas e não funcionaram, o que delimita onde o trabalho futuro deve ser dirigido (Seção \ref{sec:res-repair});
+
+    \item \textbf{Uma quantificação do efeito de dispensar a metade de árvore geradora em grafos conexos}, questão levantada teoricamente por \citeonline{core-sg} e, até onde pudemos verificar, não medida anteriormente (Seção \ref{sec:res-connectivity}).
+\end{enumerate}
+
+% ---
+\section{Relevância\label{sec:significance}}
+% ---
+
+A relevância deste trabalho se manifesta em três planos.\\
+
+No plano imediato, ele amplia a faixa de conjuntos de dados sobre os quais a análise baseada em densidade com varredura de $\mpts$ é executável em aceleradores. Um grafo sobre $5 \times 10^7$ pontos, que em construção não decomposta exigiria dezenas de gigabytes de memória de dispositivo, passa a ser construído com residência por dispositivo da ordem de centenas de megabytes. Isso não é uma melhoria de desempenho: é a diferença entre executar e não executar.\\
+
+No plano metodológico, a noção de instância autocontida é independente do \ac{CORE-SG}. Ela se aplica a qualquer construção de grafo de vizinhança por refinamento iterativo, e a propriedade de não exigir comunicação entre dispositivos durante a execução é o que torna o escalonamento trivial. A caracterização de quanto essa independência custa, e de como a sobreposição permite comprá-la de volta, transfere-se a outros métodos que enfrentem a mesma escolha.\\
+
+No plano das limitações conhecidas, o trabalho documenta negativamente aquilo que não funcionou. Quatro estratégias distintas de redução do passo de reparo foram implementadas e medidas, e nenhuma delas reduziu seu custo a qualidade constante. Resultados negativos raramente são publicados, mas são o que impede que o mesmo caminho seja percorrido duas vezes, e são registrados aqui com o mesmo cuidado dedicado aos positivos.\\
+
+% ---
+\section{Delimitação do escopo\label{sec:scope}}
+% ---
+
+Este trabalho trata da \emph{construção} do \ac{CORE-SG} sobre um conjunto de dados fixo e disponível em sua totalidade. A manutenção da estrutura sob chegada contínua de dados --- isto é, sobre fluxos --- não faz parte do escopo, embora tenha sido objeto de investigação ao longo do projeto. A abstração de instância desenvolvida aqui não exige que um bloco seja novo, e uma instância cujo contexto é extraído de um grafo já existente estende esse grafo em vez de construí-lo; resultados preliminares nessa direção, obtidos antes da delimitação do escopo atual, são apresentados na Seção \ref{sec:fut-streams} como ponto de partida para trabalho futuro, e não como contribuição validada deste texto.\\
+
+Também não fazem parte do escopo a remoção de pontos, o tratamento de desvio de conceito, e a execução distribuída entre múltiplos nós. As duas primeiras são consequências naturais do recorte sobre conjuntos fixos; a terceira é discutida na Seção \ref{sec:fut-multinode}, onde se identifica qual passo da construção constitui o obstáculo e quais caminhos permanecem abertos.\\
+
+% ---
+\section{Objetivos\label{sec:objectives}}
+% ---
+
+O objetivo principal deste trabalho é tornar a construção do \ac{CORE-SG} executável em múltiplos aceleradores, de forma que a memória exigida de cada dispositivo seja determinada por um parâmetro sob controle do usuário, e não pelo tamanho do conjunto de dados, viabilizando a construção de grafos que não caberiam em um único dispositivo.\\
+
+Os objetivos secundários são:
+\begin{itemize}
+    \item Desenvolver uma decomposição da construção do \ac{k-NNG} cuja unidade de trabalho seja autocontida o bastante para ser distribuída entre dispositivos sem comunicação entre eles, e cuja memória individual seja controlável;
+
+    \item Caracterizar o custo dessa decomposição, tanto em qualidade de vizinhança quanto em tempo de execução, e identificar o parâmetro que permite ao usuário escolher sua posição nesse compromisso;
+
+    \item Desenvolver uma alternativa ao cálculo exato da \ac{MST} sobre o grafo completo, dado que esse cálculo é quadrático e centralizado, e avaliar a qualidade da estimativa resultante contra a árvore que ela substitui;
+
+    \item Avaliar a qualidade das aproximações obtidas contra referências exatas, e não contra rótulos de classe, medindo a razão de peso entre a árvore geradora aproximada e a exata, a concordância entre os agrupamentos planos extraídos de ambas, e a revocação da vizinhança aproximada;
+
+    \item Caracterizar o comportamento do método sob variação de escala, de dimensionalidade, de quantidade de instâncias e de quantidade de dispositivos, e identificar os limites em que suas afirmações deixam de valer.
+\end{itemize}
+
+% ---
+\section{Organização do texto\label{sec:text-organization}}
+% ---
+
+O restante do texto está organizado da seguinte forma. O Capítulo \ref{cha:theory-framework} apresenta o referencial teórico, detalhando o funcionamento do agrupamento baseado em densidade e a construção do \ac{CORE-SG}, formalizando o problema atacado, sintetizando a literatura sobre construção aproximada de grafos de vizinhança, agrupamento distribuído e \textit{hubness}, revisando as abordagens que foram inicialmente consideradas e posteriormente descartadas, e justificando as que foram adotadas. O Capítulo \ref{cha:methods} descreve os materiais e métodos, incluindo a especificação do algoritmo proposto, seu pseudocódigo, e o protocolo experimental com as métricas, conjuntos de dados e linhas de base utilizados. O Capítulo \ref{cha:results} apresenta os resultados, organizados na ordem das questões de pesquisa. O Capítulo \ref{cha:discussion} discute o significado e o alcance desses resultados, delimita o escopo das afirmações feitas, apresenta os resultados preliminares sobre fluxos de dados, e enumera os desdobramentos de pesquisa que o trabalho deixa em aberto.\\
