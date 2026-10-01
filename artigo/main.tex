@@ -1,52 +1,26 @@
-% ---------------------------------------------------------------------------
-% Multi-GPU CORE-SG construction -- IEEE Access format.
-%
-% Requires ieeeaccess.cls, which ships in the IEEE Access template package and
-% is NOT part of TeX Live. Overleaf provides it. Place it beside this file for
-% a local build.
-%
-% All figures are pgfplots/TikZ, so there are no external image dependencies
-% and every plot is editable in place. Numbers come from results_final_v3.csv
-% and results_final_v4.csv (10,940 measurements, 4x RTX 2080 SUPER) except for
-% two tables whose runs predate them and are deterministic in the quantity they
-% report: Table 2 and Fig. 2 come from results.csv and results_local.csv
-% respectively. Provenance is stated in Section V-A.
-%
-% TODO before submission: search for "TODO".
-% ---------------------------------------------------------------------------
+% Multi-GPU CORE-SG construction -- IEEE Access format. Requires
+% ieeeaccess.cls, which ships with the IEEE Access template package and is not
+% part of TeX Live. All figures are pgfplots/TikZ, so there are no external
+% image dependencies.
 \documentclass{ieeeaccess}
 
-% ---------------------------------------------------------------------------
-% ieeeaccess.cls redefines the TeX primitive \year as a one-argument setter
-% (\def\year#1{\gdef\theyear{#1}}, cls line 359), so \number\year no longer
-% expands to a number. pgfmath initialises its random seed from it and fails
-% with "Missing number, treated as zero" the moment pgfplots is loaded. Restore
-% a numeric \year here; set the publication year through \theyear instead of
-% \year{...}. Remove this block only if the figures stop using pgfplots.
-% ---------------------------------------------------------------------------
+% ieeeaccess.cls turns \year into a setter, which breaks pgfmath's random seed
+% and stops pgfplots from loading. Restore a numeric \year; the publication year
+% is set through \theyear below.
 \makeatletter
 \let\accessyearsetter\year
 \def\year{2026}
 \makeatother
 
-% ---------------------------------------------------------------------------
-% ieeeaccess.cls sets \xfigwd only inside its own \Figure macro (cls line 277),
-% which wraps \includegraphics. Its \@makecaption then tests \ifdim\xfigwd
-% (cls line 227), so ANY figure environment that is not an included image file,
-% such as every TikZ or pgfplots figure here, fails with an undefined control
-% sequence at the caption. Providing a zero default selects the ordinary
-% column-width caption branch, which is correct for single-column figures. The
-% class overwrites this whenever \Figure is used, so image figures are
-% unaffected. Revisit if a full-width figure* is ever added.
-% ---------------------------------------------------------------------------
+% The class sets \xfigwd only inside its own \Figure macro, but its \@makecaption
+% tests it, so a figure that is not an included image file fails at the caption.
+% A zero default selects the single-column caption branch.
 \providecommand{\xfigwd}{0pt}
 
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
-% ieeeaccess.cls loads neither; `algorithmic` supplies the body macros and
-% `algorithm` the float wrapper that numbers and captions them. The caption
-% path is the same one the TikZ figures use, so the \xfigwd default below
-% covers it.
+% Neither is loaded by the class: `algorithmic` supplies the body macros and
+% `algorithm` the numbered float wrapper.
 \usepackage{algorithm}
 \usepackage{algorithmic}
 \usepackage{graphicx}
@@ -66,29 +40,14 @@
 \newcommand{\coredist}{d_{\mathrm{core}}}
 \newcommand{\ef}{\mathit{ef}}
 
-% ---------------------------------------------------------------------------
-% ieeeaccess.cls defines accessblue as a PANTONE *spot* colour through the
-% spotcolor package (cls lines 126-130). On current TeX Live that produces a
-% colour space viewers reject: the log fills with "Package xcolor Warning:
-% Incompatible color definition", the PDF reports "Bad color space
-% 'PANTONE3015C'", and everything drawn in accessblue renders invisible. That is
-% the title (cls line 548), all section headings (cls line 144), the ABSTRACT and
-% INDEX TERMS labels, and the "FIGURE n."/"TABLE n." caption labels. Subsection
-% headings survive because they use greycolor, which is already plain CMYK.
-%
-% Redefining accessblue in CMYK fixes it. The values are the ones the class
-% itself assigns the spot colour on cls line 128, {1 0.3 0 0.2}, so the printed
-% colour is unchanged and only the colour space differs. This must come after
-% every \usepackage, because pgfplots pulls in xcolor and xcolor reinitialises
-% the colour system. Remove it if IEEE's production system resolves the spot
-% colour correctly.
-% ---------------------------------------------------------------------------
+% The class defines accessblue as a PANTONE spot colour, which current TeX Live
+% renders as an unusable colour space: the title, the section headings and the
+% caption labels all come out invisible. These are the CMYK values the class
+% itself assigns that spot colour, so only the colour space changes. It must come
+% after every \usepackage, since pgfplots pulls in and reinitialises xcolor.
 \definecolor{accessblue}{cmyk}{1,0.3,0,0.2}
 
-% Publication year. The class turns \year into a setter storing into \theyear
-% (default 2016, shown in the page footer). Because the block above needs \year
-% to stay numeric, set \theyear directly rather than calling \year{...}.
-\def\theyear{2026}          % TODO: publication year
+\def\theyear{2026}
 
 \begin{document}
 \history{Date of publication xxxx 00, 0000, date of current version xxxx 00, 0000.}
@@ -97,31 +56,21 @@
 \title{Multi-GPU Construction of the CORE-SG for Density-Based
 Clustering at Scale}
 
-% ---------------------------------------------------------------------------
-% TODO: four authors. Replace names, memberships, affiliations and e-mails.
-% ---------------------------------------------------------------------------
-\author{\uppercase{First A. Author}\authorrefmark{1},
-\uppercase{Second B. Author}\authorrefmark{2},
-\uppercase{Third C. Author}\authorrefmark{3},
-\uppercase{and Fourth D. Author}\authorrefmark{4},
-\IEEEmembership{Member, IEEE}}
+\author{\uppercase{Eduardo Pioli do Amaral}\authorrefmark{1},
+\uppercase{Gabriel Meirelles Carvalho Orlando}\authorrefmark{1},
+\uppercase{Hermes Senger}\authorrefmark{2},
+\uppercase{Murilo Coelho Naldi}\authorrefmark{1}}
 
-\address[1]{TODO Department, TODO University, TODO City, TODO Country
-(e-mail: todo1@example.org)}
-\address[2]{TODO Department, TODO University, TODO City, TODO Country
-(e-mail: todo2@example.org)}
-\address[3]{TODO Department, TODO University, TODO City, TODO Country
-(e-mail: todo3@example.org)}
-\address[4]{TODO Department, TODO University, TODO City, TODO Country
-(e-mail: todo4@example.org)}
+\address[1]{Department of Computing (DC), Federal University of São Carlos (UFSCar), São Carlos, São Paulo 13565-905, Brazil}
+\address[2]{Institute of Mathematical and Computing Sciences (ICMC), University of São Paulo (USP), São Carlos, São Paulo 13566-590, Brazil}
 
-\tfootnote{TODO: funding and support acknowledgment.}
+\tfootnote{This work was supported in part by the Coordination for the Improvement of Higher Education Personnel (CAPES), through a M.Sc. Scholarship under Grant 001; and in part by São Paulo Research Foundation (FAPESP) under Grant 2026/06676-6.}
 
 \markboth
 {Author \headeretal: Multi-GPU Construction of the CORE-SG}
 {Author \headeretal: Multi-GPU Construction of the CORE-SG}
 
-\corresp{Corresponding author: First A. Author (e-mail: todo1@example.org).}
+\corresp{Corresponding author: Eduardo Pioli do Amaral (eduardoamaral@estudante.ufscar.br)}
 
 \begin{abstract}
 
@@ -1450,7 +1399,10 @@ in the data set, and the estimate degenerates into the exact spanning tree it wa
 introduced to avoid.
 
 Substituting an intrinsic-dimensionality estimate for $d$ addresses the cause.
-The estimate is 10.3 on \texttt{sift1m} against an ambient 128, and 24.1 on
+Read off the stored $k$-NN radii by maximum likelihood \cite{levina_bickel} and
+pooled as \cite{mackay_ghahramani} prescribe, the estimate costs $O(nk)$ and
+needs no structure the build does not already hold. It is 10.3 on
+\texttt{sift1m} against an ambient 128, and 24.1 on
 \texttt{gist1m} against 960. At four times that estimate the selected fraction
 falls to 0.28--0.47 on the three degenerate sets and 0.04--0.17 on the rest, for
 2.1 to 8.7 times less bridge time. The cost appears where the bridges carry the
@@ -1518,10 +1470,63 @@ $5\times10^7$ points, which one node can gather and span.
 
 % ===========================================================================
 \section*{Acknowledgment}
-TODO.
+The authors wish to thank both the Coordination for the Improvement of Higher Education Personnel (CAPES) and the São Paulo Research Foundation (FAPESP) for the funding during the development of this research project and its submission. We also thank the Federal University of São Carlos (UFSCar) Department of Computing (DC) for the support, the space, and the tools to make this research happen.
+
+The authors used Anthropic's Claude AI to assist with code optimization and debugging, and to improve the clarity and flow of the manuscript text. All AI-assisted content was reviewed, verified, and edited by the authors, who take full responsibility for the final manuscript.
 
 \bibliographystyle{IEEEtran}
 \bibliography{references}
+
+\begin{IEEEbiographynophoto}{EDUARDO PIOLI DO AMARAL}
+is currently pursuing the M.Sc. degree in computer science with the Department
+of Computing (DC), Federal University of São Carlos (UFSCar), São
+Carlos, Brazil, where he is a member of the Data Mining and Applications
+Research Group (MIDAS).
+
+His research interests include unsupervised learning, clustering, graph
+algorithms, and high-performance computing.
+\end{IEEEbiographynophoto}
+
+\begin{IEEEbiographynophoto}{GABRIEL MEIRELLES CARVALHO ORLANDO}
+is with the Department of Computing (DC), Federal University of São Carlos
+(UFSCar), São Carlos, Brazil.
+
+He held São Paulo Research Foundation (FAPESP) undergraduate research
+scholarships on scalable distributed algorithms for approximating the
+$k$-nearest-neighbor graph, including a research period abroad on fast parallel
+$k$-nearest-neighbor graph construction for multiple density estimation. His
+research interests include approximate nearest-neighbor graphs, clustering, and
+parallel computing.
+\end{IEEEbiographynophoto}
+
+\begin{IEEEbiographynophoto}{HERMES SENGER}
+received the B.Sc. degree in computer science from São Paulo State
+University (UNESP), Brazil, in 1989, and the M.Sc. and Ph.D. degrees in
+computer engineering from the University of São Paulo (USP), Brazil, in
+1996 and 2002, respectively.
+
+He is currently a Professor with the Department of Computer Systems, Institute
+of Mathematical and Computing Sciences (ICMC), University of São Paulo,
+São Carlos, Brazil. His research interests include high-performance
+computing, parallel and distributed computing, code optimization, and computing
+infrastructures, including clusters, grids, clouds, and edge computing.
+\end{IEEEbiographynophoto}
+
+\begin{IEEEbiographynophoto}{MURILO COELHO NALDI}
+received the B.Sc., M.Sc., and Ph.D. degrees in computer science from the
+University of São Paulo (USP), Brazil, in 2004, 2006, and 2011,
+respectively.
+
+He is currently an Associate Professor with the Department of Computing (DC),
+Federal University of São Carlos (UFSCar), São Carlos, Brazil. His
+research interests include data science, machine learning, evolutionary
+computation, and high-performance computing. He is a member of the Special
+Committee on Computational Intelligence of the Brazilian Computer Society.
+\end{IEEEbiographynophoto}
+
+\vspace*{6pt}
+\noindent Coordenação de Aperfeiçoamento de Pessoal de Nível Superior (CAPES)
+--- ROR identifier: 00x0ma614
 
 \EOD
 
