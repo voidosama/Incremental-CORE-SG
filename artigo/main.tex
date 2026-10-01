@@ -17,6 +17,18 @@
 % A zero default selects the single-column caption branch.
 \providecommand{\xfigwd}{0pt}
 
+% The class redefines the biography environments in terms of a `biography'
+% counter and an `@biographyTOCentrynotmade' flag, but declares neither:
+% IEEEtran.cls provides them under its own IEEE-prefixed names. Without these
+% two lines any biography fails with "No counter 'biography' defined", followed
+% by a cascade from the undefined conditional. Both the photo and the no-photo
+% environments are affected.
+\makeatletter
+\newcounter{biography}
+\newif\if@biographyTOCentrynotmade
+\global\@biographyTOCentrynotmadetrue
+\makeatother
+
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
 % Neither is loaded by the class: `algorithmic` supplies the body macros and
