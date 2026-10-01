@@ -29,6 +29,12 @@
 \global\@biographyTOCentrynotmadetrue
 \makeatother
 
+% The class sets the biography name at medium weight; published IEEE Access
+% papers have it bold. Helvetica bold is already used elsewhere in the document,
+% so this resolves without a font substitution.
+\renewcommand{\biographyheadfont}{%
+  \sffamily\fontencoding{T1}\bfseries\fontsize{8}{9.6}\selectfont}
+
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
 % Neither is loaded by the class: `algorithmic` supplies the body macros and
@@ -1495,11 +1501,10 @@ Education, Science and Technology of Southern Minas Gerais (IFSULDEMINAS),
 Brazil, in 2023, where he held an undergraduate research scholarship from the
 Minas Gerais State Research Foundation (FAPEMIG). He is currently pursuing the
 M.Sc. degree in computer science with the Department of Computing (DC), Federal
-University of São Carlos (UFSCar), São Carlos, Brazil.
-
-He is a member of the Data Mining and Applications Research Group (MIDAS). His
-research interests include unsupervised learning, density-based clustering,
-nearest-neighbor graphs, and high-performance computing.
+University of São Carlos (UFSCar), São Carlos, Brazil, where he is a member of
+the Data Mining and Applications Research Group (MIDAS). His research interests
+include unsupervised learning, density-based clustering, nearest-neighbor graphs,
+and high-performance computing.
 \end{IEEEbiographynophoto}
 
 \begin{IEEEbiographynophoto}{GABRIEL MEIRELLES CARVALHO ORLANDO}
@@ -1507,45 +1512,39 @@ received the B.Sc. degree in computer science from the Federal University of Sã
 Carlos (UFSCar), São Carlos, Brazil, where he held an undergraduate research
 scholarship from the São Paulo Research Foundation (FAPESP) on parallel and
 distributed approximate methods for constructing the $k$-nearest-neighbor graph.
-He is currently pursuing the M.Sc. degree in computer science with the Department
-of Computing (DC), UFSCar.
-
 In 2023, under a FAPESP research internship abroad award, he spent a research
-period at the University of Alberta, Edmonton, AB, Canada, supervised by
-Prof. Jörg Sander, working on fast parallel $k$-nearest-neighbor graph
-construction for multiple density estimates. His research interests include
-approximate nearest-neighbor graphs, unsupervised learning, and parallel
-computing.
+period at the University of Alberta, Edmonton, AB, Canada, working on fast
+parallel $k$-nearest-neighbor graph construction for multiple density estimates.
+He is currently pursuing the M.Sc. degree in computer science with the Department
+of Computing (DC), UFSCar. His research interests include approximate
+nearest-neighbor graphs, unsupervised learning, and parallel computing.
 \end{IEEEbiographynophoto}
 
 \begin{IEEEbiographynophoto}{HERMES SENGER}
-received the B.Sc. degree in computer science from São Paulo State
-University (UNESP), Brazil, in 1989, and the M.Sc. and Ph.D. degrees in
-computer engineering from the University of São Paulo (USP), Brazil, in
-1996 and 2002, respectively.
-
-He is currently a Professor with the Department of Computer Systems, Institute
-of Mathematical and Computing Sciences (ICMC), University of São Paulo,
-São Carlos, Brazil. His research interests include high-performance
+received the B.Sc. degree in computer science from São Paulo State University
+(UNESP), Brazil, in 1989, and the M.Sc. and Ph.D. degrees in computer
+engineering from the University of São Paulo (USP), Brazil, in 1996 and 2002,
+respectively. He is currently a Professor with the Department of Computer
+Systems, Institute of Mathematical and Computing Sciences (ICMC), University of
+São Paulo, São Carlos, Brazil. His research interests include high-performance
 computing, parallel and distributed computing, code optimization, and computing
 infrastructures, including clusters, grids, clouds, and edge computing.
 \end{IEEEbiographynophoto}
 
 \begin{IEEEbiographynophoto}{MURILO COELHO NALDI}
 received the B.Sc., M.Sc., and Ph.D. degrees in computer science from the
-University of São Paulo (USP), Brazil, in 2004, 2006, and 2011,
-respectively.
-
-He is currently an Associate Professor with the Department of Computing (DC),
-Federal University of São Carlos (UFSCar), São Carlos, Brazil. His
-research interests include data science, machine learning, evolutionary
-computation, and high-performance computing. He is a member of the Special
-Committee on Computational Intelligence of the Brazilian Computer Society.
+University of São Paulo (USP), Brazil, in 2004, 2006, and 2011, respectively. He
+is currently an Associate Professor with the Department of Computing (DC),
+Federal University of São Carlos (UFSCar), São Carlos, Brazil. His research
+interests include data science, machine learning, evolutionary computation, and
+high-performance computing. He is a member of the Special Committee on
+Computational Intelligence of the Brazilian Computer Society.
 \end{IEEEbiographynophoto}
 
 \vspace*{6pt}
-\noindent Coordenação de Aperfeiçoamento de Pessoal de Nível Superior (CAPES)
---- ROR identifier: 00x0ma614
+{\biographyfont\raggedright\hyphenpenalty=10000\exhyphenpenalty=10000
+\noindent Coordenação de Aperfeiçoamento de Pessoal de Nível Superior (CAPES) -
+ROR identifier: 00x0ma614\par}
 
 \EOD
 
