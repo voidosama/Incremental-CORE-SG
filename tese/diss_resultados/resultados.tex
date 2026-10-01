@@ -10,9 +10,9 @@ Este capítulo apresenta os resultados, organizados na ordem das questões de pe
 \section{Procedência das medições\label{sec:res-provenance}}
 % =====================================================================
 
-Todos os números apresentados neste capítulo provêm de medições do método como descrito no Capítulo \ref{cha:methods}, tomadas no agregado de quatro \ac{GPU}s descrito na Seção \ref{sec:hardware}, sobre até 5 sementes aleatórias, sem execuções falhas. Todo experimento usa múltiplas sementes porque o NN-Descent é aleatorizado e seu cache de vizinhos reversos é deliberadamente tolerante a corridas entre threads. Experimentos que mantêm o \ac{k-NNG} exato são determinísticos e usam 2 sementes, o que foi verificado observando-se desvio padrão exatamente nulo sobre 5.\
+Todos os números apresentados neste capítulo provêm de medições do método como descrito no Capítulo \ref{cha:methods}, tomadas no agregado de quatro \ac{GPU}s descrito na Seção \ref{sec:hardware}, sobre até 5 sementes aleatórias, sem execuções falhas. Todo experimento usa múltiplas sementes porque o NN-Descent é aleatorizado e seu cache de vizinhos reversos é deliberadamente tolerante a corridas entre threads. Experimentos que mantêm o \ac{k-NNG} exato são determinísticos e usam 2 sementes, o que foi verificado observando-se desvio padrão exatamente nulo sobre 5.\\
 
-Duas medições precedem o conjunto atual e são reportadas sem reexecução, porque a grandeza que cada uma reporta não é afetada pelo trabalho de implementação realizado desde então: a Tabela \ref{tab:bridges}, que mantém a metade de vizinhança exata nos dois braços, e a Figura \ref{fig:components}, que conta componentes.\
+Duas medições precedem o conjunto atual e são reportadas sem reexecução, porque a grandeza que cada uma reporta não é afetada pelo trabalho de implementação realizado desde então: a Tabela \ref{tab:bridges}, que mantém a metade de vizinhança exata nos dois braços, e a Figura \ref{fig:components}, que conta componentes.\\
 
 % =====================================================================
 \section{As pontes anti-hub reproduzem a árvore geradora exata\label{sec:res-bridges}}
