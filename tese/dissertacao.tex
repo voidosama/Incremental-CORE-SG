@@ -1,0 +1,282 @@
+%% =====================================================================
+%% Dissertacao de mestrado -- primeira versao integral (rascunho).
+%%
+%% Este arquivo e o documento principal da DISSERTACAO. Ele nao substitui
+%% modeloABNT2.tex, que permanece como o texto da QUALIFICACAO: os dois
+%% coexistem no mesmo diretorio e compartilham a classe, as figuras e a
+%% bibliografia. Compile com:
+%%
+%%     pdflatex dissertacao && bibtex dissertacao && pdflatex dissertacao
+%%
+%% Baseado em modeloABNT2, v1.0 athila -- Copyright 2013 by Athila e Monaro
+%% =====================================================================
+
+% ------------------------------------------------------------------------
+% Opcoes:
+% 	tesedr:     Formata documento para tese de doutorado
+%	qualidr:    Formata documento para qualificacao de doutorado
+% 	dissertmst: Formata documento para dissertacao de mestrado
+% 	qualimst:   Formata documento para qualificacao de mestrado
+% ------------------------------------------------------------------------
+\documentclass[dissertmst]{ufscar}
+
+% ---
+% PACOTES
+% ---
+
+% ---
+% Pacotes fundamentais
+% ---
+\usepackage{cmap}				% Mapear caracteres especiais no PDF
+\usepackage{lmodern}				% Usa a fonte Latin Modern
+\usepackage{amsmath,amssymb}		% Carregado antes do hyperref, por convenção
+\usepackage{makeidx}            	% Cria o indice
+\usepackage{hyperref}  			% Controla a formação do índice
+\usepackage{lastpage}			% Usado pela Ficha catalográfica
+\usepackage{indentfirst}			% Indenta o primeiro parágrafo de cada seção.
+\usepackage{nomencl} 			% Lista de simbolos
+\usepackage{graphicx}			% Inclusão de gráficos
+\usepackage[round]{natbib}
+% \bibliographystyle{dinat}
+
+%\usepackage[alf]{abntex2cite}
+% ---
+
+% ---
+% Pacotes adicionais
+% ---
+\usepackage[printonlyused]{acronym}
+\usepackage[table]{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.16}
+% ---
+
+% ---
+% Ambiente de algoritmo. A classe ufscar ja carrega `algorithm' e
+% `algorithmic'; aqui apenas traduzimos as palavras-chave e o nome do
+% flutuante para o portugues.
+% ---
+\floatname{algorithm}{Algoritmo}
+\renewcommand{\algorithmicrequire}{\textbf{Entrada:}}
+\renewcommand{\algorithmicensure}{\textbf{Saída:}}
+\renewcommand{\algorithmicfor}{\textbf{para}}
+\renewcommand{\algorithmicforall}{\textbf{para cada}}
+\renewcommand{\algorithmicdo}{\textbf{faça}}
+\renewcommand{\algorithmicendfor}{\textbf{fim para}}
+\renewcommand{\algorithmicif}{\textbf{se}}
+\renewcommand{\algorithmicthen}{\textbf{então}}
+\renewcommand{\algorithmicelse}{\textbf{senão}}
+\renewcommand{\algorithmicendif}{\textbf{fim se}}
+\renewcommand{\algorithmicwhile}{\textbf{enquanto}}
+\renewcommand{\algorithmicendwhile}{\textbf{fim enquanto}}
+\renewcommand{\algorithmicrepeat}{\textbf{repita}}
+\renewcommand{\algorithmicuntil}{\textbf{até que}}
+% `\algorithmicreturn' só existe em versões recentes de algorithmic.sty; o
+% \providecommand garante que o \renewcommand seguinte não falhe.
+\providecommand{\algorithmicreturn}{\textbf{retorne}}
+\renewcommand{\algorithmicreturn}{\textbf{retorne}}
+% ---
+
+% ---
+% Abreviacoes de simbolos usadas com frequencia no texto.
+% ---
+\newcommand{\mpts}{m_{pts}}
+\newcommand{\kmax}{k_{max}}
+\newcommand{\coredist}{\mathrm{core}}
+\newcommand{\mrd}{\mathrm{mrd}}
+\newcommand{\ef}{\mathit{ef}}
+% ---
+
+% ---
+% Informações de dados para CAPA e FOLHA DE ROSTO
+% ---
+%
+% Título:
+%	1. Título em português
+%	2. Título em inglês
+\titulo{CORE-SG multi-GPU: construção escalável de grafos baseados em densidade por decomposição em instâncias independentes}{Multi-GPU CORE-SG: scalable construction of density-based graphs by decomposition into independent instances}
+%
+% Autor:
+%	1. Nome completo do autor
+%	2. Formato de nome para bibliografia
+\autor{Eduardo Pioli do Amaral}{Do Amaral, Eduardo}
+%
+% Cidade
+\local{São Carlos}
+% Ano de defesa
+\data{2026}
+
+% Universidade
+\universidade{Universidade Federal de São Carlos}{UFSCar}
+
+% Centro
+\centro{Centro de Ciências Exatas e de Tecnologia}{CCET}
+
+% Depatamento
+\departamento{Departamento de Computação}{DC}
+
+% Programa de Pós-Graduação
+\programa{Programa de Pós-Graduação em Ciência da Computação}{PPGCC}
+
+% Curso
+\curso{Ciência da Computação}
+
+% Área de concentração da pesquisa
+\areaconcentracao{Metodologias e Técnicas de Computação}
+
+% Nome do orientador
+\orientador{Murilo Coelho Naldi}
+% ---
+
+% ---
+% compila o indice
+% ---
+\makeindex
+% ---
+
+% ---
+% Compila a lista de abreviaturas e siglas
+% ---
+\makenomenclature
+% ---
+
+% ----
+% Início do documento
+% ----
+
+\begin{document}
+
+% ----------------------------------------------------------
+% ELEMENTOS PRÉ-TEXTUAIS
+% ----------------------------------------------------------
+\pretextual
+
+% ---
+% Insere Capa, Folha de rosto.
+% ---
+\maketitle
+
+% ---
+% Dedicatória
+% ---
+\imprimirdedicatoria{Dedico este trabalho a todos que se empenham em desbravar o desconhecido e deixar sua marca no mundo, desafiando os limites do possível e abrindo novos caminhos para a humanidade.}
+% ---
+
+% ---
+% Agradecimentos
+% ---
+\imprimiragradecimentos{
+Agradeço ao Programa de Pós-Graduação em Ciência da Computação da UFSCar, fomentador de pesquisas e projetos na instituição. Agradeço ao programa de DS da CAPES, Fundação Coordenação de Aperfeiçoamento de Pessoal de Nível Superior, que promovem este projeto com recursos necessários para a pesquisa. Agradeço ao meu ilustre orientador, Prof. Dr. Murilo Coelho Naldi, pelas oportunidades, suportes, confiança, orientação, e pelo papel fundamental no meu desenvolvimento acadêmico e ascensão.
+
+Agradeço também à minha família, que em meio a tantos nomes se destacam meus pais, Sandra e Antônio. Pelo esforço em me proporcionar o melhor, pela disposição em me apoiar a todo momento, pelos anos de carinho, compreensão, e incentivo a seguir minhas ambições e forjar meu futuro.
+
+Agradeço também à Thaís, minha namorada, melhor amiga, e inestimável companheira. Por todos esses anos de apoio mútuo e amor recíproco. Por sempre impulsionarmos um ao outro cada vez mais para o alto, e sempre manter este porto seguro de leveza, espirituosidade e serenidade que repele as angústias do mundo moderno.
+
+Agradeço às minhas poucas porém longevas amizades, Igor, Matheus, Pedro, Gabriel, Rogério, Guilherme, André, Eugênio e Renan. Que propiciaram um espaço de entretenimento e descontração. Por todas as conversas, edificantes ou burlescas, e pela compreensão e acolhimento num mundo muitas vezes desafiador e ríspido.
+
+Agradeço, em especial, o Prof. Dr. Diego Saqui, um verdadeiro mestre em amplo sentido, que me possibilitou este mestrado e me forneceu não só as bases acadêmicas que carrego comigo, como me ensinou a resistência, a conquista, o esforço e as reflexões acerca do que eu poderia vir a ser.
+
+Agradeço a todos que conheci nesta jornada, que me ajudaram seja direta ou indiretamente, e que me apoiaram e me viabilizaram ser quem sou.
+
+Por fim, se há uma força metafísica que transcende a limitada compreensão humana, agradeço pelas eventualidades e fortunas que me tornaram quem sou e me trouxeram aqui. Obrigado pelo vigor, pelo frenesi e pelo \textit{savoir-faire}.
+}
+
+% ---
+% Epígrafe
+% ---
+\imprimirepigrafe{
+		``O homem comum é exigente com os outros; o homem superior é exigente consigo mesmo.''\\
+		(Marco Aurélio)
+}
+% ---
+
+% ---
+% RESUMO e ABSTRACT
+% ---
+
+% Resumo em português
+\begin{resumo}{Agrupamento baseado em densidade, Computação em GPU, Particionamento de grafos, Algoritmos paralelos, Hubness, Árvore geradora mínima, Grafo de vizinhos mais próximos}
+    Métodos de agrupamento baseados em densidade, como o HDBSCAN*, dependem de um parâmetro de suavização cujo valor adequado não se conhece de antemão, e avaliar vários valores candidatos é caro porque cada avaliação se apoia em um cálculo quadrático. O CORE-SG, grafo substituto formado pela união de um grafo de $k$ vizinhos mais próximos com uma árvore geradora mínima, elimina essa repetição ao servir, a partir de um único grafo, todo valor do parâmetro de suavização até um máximo $\kmax$. Sua construção, porém, é centralizada: o grafo é construído e armazenado em um único dispositivo, e o maior conjunto de dados processável fica limitado pela memória desse dispositivo. Este trabalho reformula a construção como um conjunto de subproblemas independentes, chamados instâncias. Uma instância reúne um bloco de pontos e o estado de vizinhança desse bloco, não acessa nenhuma estrutura global durante a execução e é despachada para qualquer acelerador disponível, sem comunicação entre dispositivos. A memória que um dispositivo precisa manter passa a ser determinada pela quantidade de instâncias, e não pela quantidade de pontos: elevar a contagem de instâncias de 1 para 64 reduz a maior instância residente de 472,0 MB para 14,6 MB, e manter essa contagem proporcional a $n$ preserva a residência em 293 MB enquanto o conjunto de dados cresce de $10^7$ para $5 \times 10^7$ pontos, onde um grafo é construído em 18,2 minutos com revocação de 0,997; a mesma construção sem particionamento exigiria 28,0 GB no dispositivo. O particionamento deixa de comparar pares situados em blocos distintos, e um passo de reparo sobre o grafo mesclado os recupera; uma sobreposição entre blocos transfere parte desse passo da CPU para os dispositivos, elevando a aceleração da fase de instâncias em quatro GPUs de 3,83--3,87 para 3,94--3,99. A árvore geradora é substituída por uma estimativa de pontes anti-hub: as arestas que as vizinhanças não fornecem são as que ligam componentes separados por densidade, tais pontes partem das bordas dos componentes, e essas bordas são identificadas pelo menor grau reverso normalizado localmente, sobre um conjunto dimensionado pela dimensionalidade e pela quantidade de arestas, e não pela quantidade de pontos. Em 14 conjuntos de dados, a estimativa produz árvores no máximo 0,024\% mais pesadas que as exatas, com agrupamentos planos idênticos, a um custo de 10,5 a 36 vezes menor. Frente ao HDBSCAN* em GPU da biblioteca NVIDIA cuML, no mesmo acelerador, a construção é de 4,53 a 10,01 vezes mais rápida entre $5 \times 10^5$ e $10^6$ pontos, e o cuML esgota um dispositivo de 8 GB em $8 \times 10^6$ pontos. Uma vez construído, o grafo responde a um valor do parâmetro de suavização em 0,853 s com $10^6$ pontos, contra 180,03 s por ajuste do cuML, e percorre toda a faixa de 32 valores por 1,08 a 1,72 vezes o custo da construção. A extensão da estrutura sob chegada contínua de dados permanece como trabalho futuro.
+\end{resumo}
+
+% Resumo em inglês
+\begin{abstract}{Density-based clustering, GPU computing, Graph partitioning, Parallel algorithms, Hubness, Minimum spanning tree, Nearest neighbour graph}
+    Density-based clustering methods such as HDBSCAN* depend on a smoothing parameter whose appropriate value cannot be known in advance, and evaluating several candidate values is expensive because each evaluation rests on a quadratic computation. The CORE-SG replacement graph, the union of a $k$-nearest-neighbour graph and one minimum spanning tree, removes that repetition by serving every smoothing value up to a maximum $\kmax$ from a single graph. Its construction, however, is centralised: the graph is built and stored on a single device, and the largest data set that can be processed is bounded by the memory of that device. This work reformulates the construction as a set of independent subproblems, called instances. An instance holds a block of points together with the neighbourhood state of that block, accesses no global structure while it runs, and is dispatched to any available accelerator without cross-device communication. The memory a device must hold is then set by the number of instances rather than by the number of points: raising the instance count from 1 to 64 lowers the largest resident instance from 472.0 MB to 14.6 MB, and raising that count in proportion to $n$ holds residency at 293 MB while the data set grows from $10^7$ to $5 \times 10^7$ points, where a graph is built in 18.2 minutes at 0.997 recall; the same construction without partitioning would require 28.0 GB on the device. Partitioning leaves pairs in separate blocks uncompared, and a repair pass over the merged graph recovers them; an overlap between blocks moves part of that pass from the CPU onto the devices, raising the speed-up of the instance phase on four GPUs from 3.83--3.87 to 3.94--3.99. The spanning tree is replaced by an anti-hub bridge estimate: the edges the neighbourhoods cannot supply are those bridging density-separated components, such bridges leave from component borders, and those borders are identified by the lowest locally-normalised reverse degree, over a set sized by dimensionality and edge count rather than by the number of points. Across 14 data sets the estimate yields trees at most 0.024\% heavier than the exact ones, with identical flat clusterings, at 10.5 to 36 times less cost. Against NVIDIA cuML's GPU HDBSCAN* on the same accelerator, construction is 4.53 to 10.01 times faster between $5 \times 10^5$ and $10^6$ points, and cuML exhausts an 8 GB device at $8 \times 10^6$ points. Once built, the graph answers one smoothing value in 0.853 s at $10^6$ points, against 180.03 s per cuML fit, and covers the whole range of 32 values for 1.08 to 1.72 times the cost of the build. Extending the structure under continuously arriving data remains future work.
+\end{abstract}
+% ---
+
+% ---
+% inserir lista de ilustrações
+% ---
+\listailustracoes
+% ---
+
+% ---
+% inserir lista de tabelas
+% ---
+\listatabelas
+% ---
+
+% ---
+% inserir lista de abreviaturas e siglas
+% ---
+\listasiglas{diss_abrev/Abreviaturas}
+% ---
+
+% ---
+% inserir o sumario
+% ---
+\sumario
+% ---
+
+% ----------------------------------------------------------
+% ELEMENTOS TEXTUAIS
+% ----------------------------------------------------------
+\mainmatter
+
+% ----------------------------------------------------------
+% Introdução
+% ----------------------------------------------------------
+\include{diss_introducao/introducao}
+
+% ----------------------------------------------------------
+% Referencial Teórico
+% ----------------------------------------------------------
+\include{diss_referencial/referencial_teorico}
+
+% ----------------------------------------------------------
+% Materiais e Métodos
+% ----------------------------------------------------------
+\include{diss_metodologia/metodologia}
+
+% ----------------------------------------------------------
+% Resultados
+% ----------------------------------------------------------
+\include{diss_resultados/resultados}
+
+% ----------------------------------------------------------
+% Discussão e Trabalhos Futuros
+% ----------------------------------------------------------
+\include{diss_discussao/discussao}
+
+% ---
+% Finaliza a parte no bookmark do PDF, para que se inicie o bookmark na raiz
+% ---
+\bookmarksetup{startatroot}%
+% ---
+% ----------------------------------------------------------
+% ELEMENTOS PÓS-TEXTUAIS
+% ----------------------------------------------------------
+\postextual
+
+% ----------------------------------------------------------
+% Referências bibliográficas
+% ----------------------------------------------------------
+\bibliography{bib/dissertacao-references}
+
+
+\end{document}
