@@ -83,71 +83,18 @@ A justificativa do Teorema 1 decorre diretamente do comportamento da \textit{mut
 
 Considere uma aresta $(p,q)$ pertencente a alguma $\mathrm{MST}_{\mpts}$ com $\mpts \leq \kmax$. Ela deve ser uma das arestas de menor peso que conectam duas partições do conjunto de dados. Se $(p,q) \in \mathrm{MST}_{\kmax}$, ela já faz parte da união em \eqref{eq:coresg}. Caso contrário, deve existir outra aresta $(r,s) \in \mathrm{MST}_{\kmax}$ conectando as mesmas partições, cujo peso é, pelas propriedades da \ac{MST}, no máximo igual ao de $(p,q)$. Restam dois casos. Se o peso de $(p,q)$ é determinado por uma \textit{core distance}, digamos $\mrd^{\mpts}(p,q) = \coredist^{\mpts}(p)$, então $d(p,q) \leq \coredist^{\mpts}(p)$, ou seja, $q$ está entre os $\mpts$ vizinhos mais próximos de $p$; a aresta pertence então ao grafo de $\mpts$ vizinhos mais próximos, que está contido no de $\kmax$ vizinhos porque $\mpts \leq \kmax$. Se o peso é determinado pela distância métrica, $(r,s)$ pode substituir $(p,q)$ sem alterar o resultado, pois liga as mesmas partições com peso não maior.\\
 
-Essa análise expõe uma assimetria entre os dois grafos constituintes que este trabalho explora. Pela definição \eqref{eq:mrd}, o peso de uma aresta cai em um de dois casos. Quando $d(x,y)$ é pequena em relação às duas \textit{core distances}, o peso é determinado pelas \textit{core distances} sozinhas, que são recuperáveis do \ac{k-NNG}. As arestas que carregam informação ainda não presente são aquelas em que a distância entre os pontos domina ambas as \textit{core distances}, ou seja, arestas longas que ligam componentes que a vizinhança não alcança. É a $\mathrm{MST}_{\kmax}$ que as fornece. A Figura \ref{fig:coresg-edge-case} ilustra um caso em que o \ac{k-NNG} sozinho não contém todas as arestas da \ac{MST}, o que estabelece que o segundo termo da união é necessário, e a união das duas estruturas garante a conectividade global.\\
+Essa análise expõe uma assimetria entre os dois grafos constituintes que este trabalho explora. Pela definição \eqref{eq:mrd}, o peso de uma aresta cai em um de dois casos. Quando $d(x,y)$ é pequena em relação às duas \textit{core distances}, o peso é determinado pelas \textit{core distances} sozinhas, que são recuperáveis do \ac{k-NNG}. As arestas que carregam informação ainda não presente são aquelas em que a distância entre os pontos domina ambas as \textit{core distances}. É a $\mathrm{MST}_{\kmax}$ que as fornece, e a Figura \ref{fig:coresg-edge-case} exibe o caso que estabelece a necessidade do segundo termo da união.\\
+
+O que esse caso mostra não é desconexão. Os dois grafos da figura são conexos, e ainda assim o \ac{k-NNG} omite uma aresta da \ac{MST}. A razão é que dois pontos podem estar próximos no espaço e ausentes das listas de vizinhos um do outro, quando cada um está dentro de uma região densa cujos $k$ vizinhos mais próximos são todos internos a ela. O grafo completo oferece então uma aresta curta ligando as duas regiões diretamente, enquanto o \ac{k-NNG} só as liga por um percurso que contorna toda a estrutura. É a configuração em ferradura, e a árvore extraída de cada grafo difere: a do grafo completo usa a corda curta e descarta a aresta mais pesada do arco, e a extraída do \ac{k-NNG} é obrigada a manter essa aresta, o que desloca a altura de fusão correspondente na hierarquia.\\
 
 \begin{figure}[htb!]
 \centering
-\caption{\label{fig:coresg-edge-case} Exemplo de um \ac{k-NNG} em (a) que não contém a \ac{MST} em (b) para um grafo completo $G_{\mpts}$, onde $k=\mpts=4$.}
+\caption{\label{fig:coresg-edge-case} A configuração em ferradura, com $k=\mpts=4$: o \ac{k-NNG} em (a) é conexo e ainda assim não contém a \ac{MST} em (b) do grafo completo $G_{\mpts}$. A aresta ausente é a corda que liga diretamente as duas regiões densas, que o \ac{k-NNG} só liga contornando o arco.}
 \includegraphics[width=\textwidth]{cap_materias_e_metodos/coresg_edge_case.eps}
 Fonte: Recriação autoral do original \cite{core-sg}.
 \end{figure}
 
-Há um segundo caso, mais sutil, em que o \ac{k-NNG} sozinho é insuficiente, e ele não envolve desconexão alguma. Dois pontos podem estar próximos no espaço e, ainda assim, ausentes das listas de vizinhos um do outro, se cada um deles estiver dentro de uma região densa cujos $k$ vizinhos mais próximos são todos internos a ela. Nessa situação, o grafo completo oferece uma aresta curta ligando as duas regiões diretamente, enquanto o \ac{k-NNG} só as liga por um percurso que contorna toda a estrutura. É a configuração em ferradura ilustrada pelo trabalho original do \ac{CORE-SG} \cite{core-sg} e reproduzida na Figura \ref{fig:horseshoe}: os dois grafos são conexos, mas a árvore geradora extraída de cada um difere, porque a do grafo completo pode usar a corda curta e descartar a aresta mais pesada do arco, e a extraída do \ac{k-NNG} não pode.\\
-
-\begin{figure}[htb!]
-\centering
-\caption{\label{fig:horseshoe} A configuração em ferradura. As regiões densas $A$ e $B$ estão próximas no espaço, mas os $k$ vizinhos mais próximos de cada ponto de $A$ estão todos dentro de $A$, de modo que a corda $A$--$B$ não pertence ao \ac{k-NNG}. Os dois grafos são conexos. A árvore geradora do grafo completo usa a corda de peso 0,76 e descarta a aresta de peso 1,16 do arco; a árvore extraída do \ac{k-NNG} é obrigada a manter essa aresta, o que altera a altura de fusão correspondente na hierarquia.}
-\begin{tikzpicture}[
-  pt/.style={circle, draw=black!55, fill=black!12, inner sep=0pt, minimum size=3.2pt},
-  knn/.style={black!45, thin},
-  heavy/.style={black, thick},
-  chord/.style={black, thick, dashed},
-  lb/.style={font=\scriptsize}
-]
-% ---- regiao densa A
-\draw[black!25] (1.63,0.45) circle (0.30);
-\foreach \x/\y in {1.56/0.52, 1.75/0.39, 1.66/0.45, 1.50/0.44}
-  \node[pt] at (\x,\y) {};
-\node[pt] (A1) at (1.60,0.38) {};
-\node[pt] (A2) at (1.72,0.51) {};
-\node[lb] at (1.63,0.92) {$A$};
-% ---- regiao densa B
-\draw[black!25] (1.63,-0.45) circle (0.30);
-\foreach \x/\y in {1.56/-0.52, 1.75/-0.39, 1.66/-0.45, 1.50/-0.44}
-  \node[pt] at (\x,\y) {};
-\node[pt] (B1) at (1.60,-0.38) {};
-\node[pt] (B2) at (1.72,-0.51) {};
-\node[lb] at (1.63,-0.92) {$B$};
-% ---- arco esparso
-\node[pt] (s1) at ( 0.975, 1.393) {};
-\node[pt] (s2) at ( 0.000, 1.700) {};
-\node[pt] (s3) at (-0.975, 1.393) {};
-\node[pt] (s4) at (-1.597, 0.581) {};
-\node[pt] (s5) at (-1.597,-0.581) {};
-\node[pt] (s6) at (-0.975,-1.393) {};
-\node[pt] (s7) at ( 0.000,-1.700) {};
-\node[pt] (s8) at ( 0.975,-1.393) {};
-\draw[knn] (A2) -- (s1);
-\draw[knn] (s1) -- (s2) -- (s3) -- (s4);
-\draw[heavy] (s4) -- (s5);
-\draw[knn] (s5) -- (s6) -- (s7) -- (s8);
-\draw[knn] (s8) -- (B2);
-% ---- corda
-\draw[chord] (A1) -- (B1);
-\node[lb, anchor=west] at (2.05, 0.10) {$0{,}76$: presente no grafo completo,};
-\node[lb, anchor=west] at (2.05,-0.15) {ausente do $k$-NNG};
-\node[lb, anchor=east] at (-1.72, 0.10) {$1{,}16$: a aresta mais pesada};
-\node[lb, anchor=east] at (-1.72,-0.15) {do arco};
-% ---- legenda
-\draw[knn]   (-1.90,-2.15) -- (-1.40,-2.15);
-\node[lb, anchor=west] at (-1.32,-2.15) {aresta do $k$-NNG};
-\draw[chord] ( 1.20,-2.15) -- ( 1.70,-2.15);
-\node[lb, anchor=west] at ( 1.78,-2.15) {aresta só do grafo completo};
-\end{tikzpicture}\\
-Fonte: Autoral, sobre a configuração descrita em \cite{core-sg}.
-\end{figure}
-
-Esse segundo caso é o que torna a questão empírica em vez de teórica: saber que o \ac{k-NNG} é conexo não basta para concluir que a árvore geradora é dispensável. A Seção \ref{sec:res-connectivity} mede quanto esse resíduo custa em dados reais.\\
+É isso que torna a questão empírica em lugar de teórica: saber que o \ac{k-NNG} é conexo não basta para concluir que a árvore geradora é dispensável. A Seção \ref{sec:res-connectivity} mede quanto esse resíduo custa em dados reais.\\
 
 % =====================================================================
 \section{O problema atacado\label{sec:problems}}
@@ -192,14 +139,7 @@ Há, além disso, um agravante específico ao \ac{CORE-SG} que não se aplica ao
 
 A distância em relação ao problema clássico é mensurável pelo que a literatura dele já resolveu. Os algoritmos sequenciais fundamentais \cite{prim,kruskal} alcançam complexidade quase linear no número de arestas, e existem realizações paralelas eficientes tanto em memória compartilhada \cite{parallel-mst} quanto em acelerador \cite{gpu-mst}. Todas elas pressupõem, porém, um grafo esparso explícito: recebem uma lista de arestas com pesos fixos e distribuem o trabalho sobre ela. Nenhuma dessas pressuposições vale para o grafo sobre o qual a $\mathrm{MST}_{\kmax}$ do \ac{CORE-SG} é definida, e é por isso que a metade de árvore geradora é tratada aqui pela substituição descrita na Seção \ref{sec:adopted-bridges}, em lugar de por paralelização.\\
 
-A Figura \ref{fig:knng-is-enough} ilustra a fronteira entre os dois casos. Se muitos vértices próximos entre si estiverem agrupados longe do restante do conjunto, as arestas do \ac{k-NNG} são insuficientes até mesmo para conectar os componentes, e uma aresta que alcance além da $k$-vizinhança é necessária. Em casos menos extremos, porém, os $k$ vizinhos mais próximos de um vértice, por serem os mais próximos, correspondem às arestas de menor peso incidentes a ele, que é exatamente o material de que uma \ac{MST} é feita.\\
-
-\begin{figure}[htb!]
-\centering
-\caption{\label{fig:knng-is-enough} Como o \ac{k-NNG} pode auxiliar em estimar arestas para a \ac{MST}.}
-\includegraphics[width=\textwidth]{cap_materias_e_metodos/knng_is_enough.eps}
-Fonte: Autoral.
-\end{figure}
+A fronteira entre o que a vizinhança fornece e o que falta pode ser enunciada em função da distância. Os $k$ vizinhos mais próximos de um vértice são, por definição, as arestas de menor peso incidentes a ele, que é o material de que uma \ac{MST} é feita; o \ac{k-NNG} já contém, portanto, a maior parte da árvore. O que ele não contém são as arestas longas entre regiões que nenhuma das duas vizinhanças alcança, e estas são as que a estimativa precisa recuperar. Localizá-las exige um critério que dispense medir a geometria das regiões, impraticável em alta dimensionalidade, e a assimetria da relação de vizinhança fornece esse critério.\\
 
 Essa assimetria determina o desenho do método. O \ac{k-NNG}, por ser localizável, é decomposto; a \ac{MST}, por ser global, não é decomposta, mas substituída.\\
 
@@ -248,9 +188,9 @@ A terceira, e a decisiva, é que a manutenção exata da árvore resolve um prob
 
 \subsection{Manutenção incremental da conectividade\label{sec:discarded-connectivity}}
 
-Uma variante mais modesta da mesma ideia também foi implementada e medida: manter incrementalmente apenas a rotulação de componentes conexos do \ac{k-NNG}, em vez da árvore completa. A estrutura foi construída, é exata, e foi verificada por um certificado que confirma que toda aresta destruída ainda tem seus extremos conectados por algum outro caminho.\\
+Uma variante mais modesta da mesma ideia também foi implementada e medida: manter incrementalmente apenas a rotulação de componentes conexos do \ac{k-NNG}, em vez da árvore completa. A estrutura foi construída, é exata, e foi verificada por um experimento para confirmar se toda aresta destruída ainda tem seus extremos conectados por algum outro caminho.\\
 
-O resultado foi negativo e é registrado como tal. A manutenção incremental perde para uma recomputação paralela da rotulação por uma margem larga, porque o NN-Descent destrói centenas de milhares de arestas não direcionadas por rodada, e cada destruição exige uma busca bidirecional para verificar se a conectividade foi preservada. A recomputação completa, por outro lado, é uma passagem de união-busca sobre arranjos contíguos de adjacência, que se paraleliza trivialmente e custa poucos milissegundos. O ganho que inicialmente se atribuiu à incrementalidade veio de eliminar a materialização da lista de arestas na recomputação, antes que da incrementalidade em si. A funcionalidade permanece implementada e desativada por padrão.\\
+O resultado foi negativo. A manutenção incremental perde para uma recomputação paralela da rotulação por uma margem larga, porque o NN-Descent destrói centenas de milhares de arestas não direcionadas por rodada, e cada destruição exige uma busca bidirecional para verificar se a conectividade foi preservada. A recomputação completa, por outro lado, é uma passagem de união-busca sobre arranjos contíguos de adjacência, que se paraleliza trivialmente e custa poucos milissegundos. O ganho que inicialmente se atribuiu à incrementalidade veio de eliminar a materialização da lista de arestas na recomputação, antes que da incrementalidade em si.\\
 
 \subsection{Sumarização localizada do grafo\label{sec:discarded-summarization}}
 
