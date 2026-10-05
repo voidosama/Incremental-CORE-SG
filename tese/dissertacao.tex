@@ -36,10 +36,13 @@
 \usepackage{indentfirst}			% Indenta o primeiro parágrafo de cada seção.
 \usepackage{nomencl} 			% Lista de simbolos
 \usepackage{graphicx}			% Inclusão de gráficos
-\usepackage[round]{natbib}
-% \bibliographystyle{dinat}
 
-%\usepackage[alf]{abntex2cite}
+% As citações vêm do `abntex2cite', que a classe `ufscar' já carrega com a
+% opção `alf' (autor-data). Ele define \cite e \citeonline e escolhe o
+% estilo `abntex2-alf' por conta própria, de modo que nem o natbib nem um
+% \bibliographystyle explícito devem ser acrescentados aqui: o natbib
+% sobrescreve os comandos de citação do abntex2cite, e o resultado é
+% \citeonline imprimindo `??' no lugar do ano.
 % ---
 
 % ---
@@ -98,7 +101,7 @@
 % Título:
 %	1. Título em português
 %	2. Título em inglês
-\titulo{CORE-SG multi-GPU: construção escalável de grafos baseados em densidade por decomposição em instâncias independentes}{Multi-GPU CORE-SG: scalable construction of density-based graphs by decomposition into independent instances}
+\titulo{CORE-SG multi-GPU: construção escalável de grafo baseado em densidade por decomposição em instâncias independentes}{Multi-GPU CORE-SG: scalable construction of density-based graph by decomposition into independent instances}
 %
 % Autor:
 %	1. Nome completo do autor
@@ -163,34 +166,22 @@
 % ---
 % Dedicatória
 % ---
-\imprimirdedicatoria{Dedico este trabalho a todos que se empenham em desbravar o desconhecido e deixar sua marca no mundo, desafiando os limites do possível e abrindo novos caminhos para a humanidade.}
+\imprimirdedicatoria{Dedico este trabalho a mim mesmo.}
 % ---
 
 % ---
 % Agradecimentos
 % ---
 \imprimiragradecimentos{
-Agradeço ao Programa de Pós-Graduação em Ciência da Computação da UFSCar, fomentador de pesquisas e projetos na instituição. Agradeço ao programa de DS da CAPES, Fundação Coordenação de Aperfeiçoamento de Pessoal de Nível Superior, que promovem este projeto com recursos necessários para a pesquisa. Agradeço ao meu ilustre orientador, Prof. Dr. Murilo Coelho Naldi, pelas oportunidades, suportes, confiança, orientação, e pelo papel fundamental no meu desenvolvimento acadêmico e ascensão.
-
-Agradeço também à minha família, que em meio a tantos nomes se destacam meus pais, Sandra e Antônio. Pelo esforço em me proporcionar o melhor, pela disposição em me apoiar a todo momento, pelos anos de carinho, compreensão, e incentivo a seguir minhas ambições e forjar meu futuro.
-
-Agradeço também à Thaís, minha namorada, melhor amiga, e inestimável companheira. Por todos esses anos de apoio mútuo e amor recíproco. Por sempre impulsionarmos um ao outro cada vez mais para o alto, e sempre manter este porto seguro de leveza, espirituosidade e serenidade que repele as angústias do mundo moderno.
-
-Agradeço às minhas poucas porém longevas amizades, Igor, Matheus, Pedro, Gabriel, Rogério, Guilherme, André, Eugênio e Renan. Que propiciaram um espaço de entretenimento e descontração. Por todas as conversas, edificantes ou burlescas, e pela compreensão e acolhimento num mundo muitas vezes desafiador e ríspido.
-
-Agradeço, em especial, o Prof. Dr. Diego Saqui, um verdadeiro mestre em amplo sentido, que me possibilitou este mestrado e me forneceu não só as bases acadêmicas que carrego comigo, como me ensinou a resistência, a conquista, o esforço e as reflexões acerca do que eu poderia vir a ser.
-
-Agradeço a todos que conheci nesta jornada, que me ajudaram seja direta ou indiretamente, e que me apoiaram e me viabilizaram ser quem sou.
-
-Por fim, se há uma força metafísica que transcende a limitada compreensão humana, agradeço pelas eventualidades e fortunas que me tornaram quem sou e me trouxeram aqui. Obrigado pelo vigor, pelo frenesi e pelo \textit{savoir-faire}.
+Gostaria de agradecer a todos que me apoiaram durante essa longa e árdua jornada marcada de atritos, obstáculos e dúvidas. E gostaria de agradecer, acima de tudo, a mim mesmo; por não ter desistido, e ter me levantado do chão milhares de vezes, mesmo que o equilíbrio que procuro ainda não se apresente no horizonte próximo.
 }
 
 % ---
 % Epígrafe
 % ---
 \imprimirepigrafe{
-		``O homem comum é exigente com os outros; o homem superior é exigente consigo mesmo.''\\
-		(Marco Aurélio)
+		``O homem é algo que deve ser superado.''\\
+		(Friedrich Wilhelm Nietzsche)
 }
 % ---
 
