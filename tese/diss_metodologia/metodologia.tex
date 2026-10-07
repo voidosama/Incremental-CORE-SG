@@ -113,6 +113,8 @@ c = 4\,\mathrm{stride} + 8k + s,
 \end{equation}
 em que $\mathrm{stride}$ é o comprimento do vetor após alinhamento, $k$ é o tamanho da vizinhança e $s$ é o estado de amostragem do NN-Descent. Uma instância ocupa, portanto, $c\,m_i$ bytes, com $m_i$ dado pela Equação \eqref{eq:instancesize}, e é a maior instância que decide se uma configuração cabe em um dado acelerador.\\
 
+Duas convenções de unidade são usadas ao longo do texto, e a distinção importa porque os limites derivados desta equação dependem dela. As capacidades de dispositivo seguem a rotulação do fabricante, em múltiplos binários, de modo que um acelerador de 8\,GB oferece $2^{33} = 8{,}59 \times 10^9$ bytes. As quantidades medidas e reportadas, como as residências da Seção \ref{sec:res-memory}, estão em múltiplos decimais de $10^6$ e $10^9$ bytes.\\
+
 Essa expressão é a resposta operacional ao problema da Seção \ref{sec:problem-scale}. Dada a memória disponível em um dispositivo, os pares $(m, \omega)$ que cabem nele são calculáveis, e não precisam ser descobertos por tentativa. A Seção \ref{sec:res-memory} reporta a grandeza diretamente medida.\\
 
 \subsection{Mesclagem\label{sec:merge}}
