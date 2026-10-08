@@ -170,19 +170,27 @@ fi
 # ===========================================================================
 if want fosc; then
 echo; echo "############ 4. ARI UNDER FOSC ############"
+# `extract' reads a saved CORE-SG, so each arm is a build that saves the
+# graph followed by an extraction from it.
 mkdir -p data/mst_fosc
-for DS in manifold_c32 manifold_c24 manifold_exact manifold_c8; do
+for DS in manifold_c32 manifold_c24 manifold_exact manifold_c8 sift1m; do
     F="data/${DS}.fvecs"
+    # sift1m is the one real conjunto in Tab. 2 and lives under data/sift/
+    [ "$DS" = sift1m ] && F="$SIFT"
     [ -f "$F" ] || { echo "-- $F missing, skipping $DS"; continue; }
     for S in $SEEDS; do
-        A="data/mst_fosc/${DS}_seed${S}_antihub"
-        E="data/mst_fosc/${DS}_seed${S}_exact"
-        [ -f "${A}_mpts24.tsv" ] || "$CLI" extract --data "$F" --kmax 24 --limit 4000 \
-            --missing antihub --seed "$S" --mpts 8,16,24 --out-prefix "$A" \
-            || echo "!! extract antihub $DS seed $S FAILED"
-        [ -f "${E}_mpts24.tsv" ] || "$CLI" extract --data "$F" --kmax 24 --limit 4000 \
-            --missing exact --seed "$S" --mpts 8,16,24 --out-prefix "$E" \
-            || echo "!! extract exact $DS seed $S FAILED"
+        for ARM in antihub exact; do
+            PRE="data/mst_fosc/${DS}_seed${S}_${ARM}"
+            G="data/mst_fosc/${DS}_seed${S}_${ARM}.coresg"
+            if [ -f "${PRE}_mpts24.tsv" ]; then
+                echo "-- $DS seed $S $ARM present, skipping"; continue
+            fi
+            "$CLI" build --data "$F" --kmax 24 --limit 4000 --instances 1 \
+                --missing "$ARM" --seed "$S" --gpu 1 --out "$G" \
+                || { echo "!! build $ARM $DS seed $S FAILED"; continue; }
+            "$CLI" extract --in "$G" --mpts 8,16,24 --out-prefix "$PRE" \
+                || echo "!! extract $ARM $DS seed $S FAILED"
+        done
     done
 done
 "$PY" scripts/fosc_ari.py --mst-dir data/mst_fosc --out "$OUT" --mpts 8,16,24 \

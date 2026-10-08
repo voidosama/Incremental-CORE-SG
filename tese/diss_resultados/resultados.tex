@@ -4,7 +4,7 @@
 
 \chapter{Resultados\label{cha:results}}
 
-Este capítulo apresenta os resultados, organizados na ordem das questões de pesquisa do Capítulo \ref{cha:intro}. As Seções \ref{sec:res-bridges} e \ref{sec:res-connectivity} tratam da QP3, isto é, da substituição da árvore geradora por uma estimativa. A Seção \ref{sec:res-memory} responde à QP1 sobre a memória por dispositivo, e a Seção \ref{sec:res-scale} verifica que a resposta se sustenta em escala. A Seção \ref{sec:res-overlap} responde à QP2 sobre o custo do particionamento em qualidade e sobre o parâmetro que o controla. As Seções \ref{sec:res-scaling} a \ref{sec:res-extract} respondem à QP4 sobre o custo em tempo e sobre o que a decomposição oferece em contrapartida. A Seção \ref{sec:res-parity} verifica que nenhuma afirmação depende do ambiente de execução, e a Seção \ref{sec:res-sensitivity} caracteriza a sensibilidade aos parâmetros livres.
+Este capítulo apresenta os resultados, organizados na ordem das questões de pesquisa do Capítulo \ref{cha:intro}. As Seções \ref{sec:res-bridges} e \ref{sec:res-connectivity} tratam da QP3, isto é, da substituição da árvore geradora por uma estimativa. A Seção \ref{sec:res-memory} responde à QP1 sobre a memória por dispositivo, e a Seção \ref{sec:res-scale} verifica que a resposta se sustenta em escala. A Seção \ref{sec:res-overlap} responde à QP2 sobre o custo do particionamento em qualidade e sobre o parâmetro que o controla, e a Seção \ref{sec:res-premerge} separa a parcela dessa qualidade que cada uma das duas fases produz. As Seções \ref{sec:res-scaling} a \ref{sec:res-extract} respondem à QP4 sobre o custo em tempo e sobre o que a decomposição oferece em contrapartida. A Seção \ref{sec:res-parity} verifica que nenhuma afirmação depende do ambiente de execução, e a Seção \ref{sec:res-sensitivity} caracteriza a sensibilidade aos parâmetros livres.
 
 % =====================================================================
 \section{Procedência das medições\label{sec:res-provenance}}
@@ -23,26 +23,28 @@ Duas medições precedem o conjunto atual e são reportadas sem reexecução, po
 Pontes só podem ser avaliadas onde o \ac{k-NNG} de fato se fragmenta. A Tabela \ref{tab:bridges} restringe-se aos conjuntos de dados em que isso ocorre, com o \ac{k-NNG} mantido exato nos dois lados da comparação, de modo que a estimativa de pontes seja a única variável. Como a referência é uma árvore geradora de custo $O(n^2 d)$, toda linha executa em $n = 4.000$; o conjunto \texttt{sift1m} aparece aqui, portanto, com dois componentes, ao passo que em seu $n$ completo o mesmo conjunto é conexo, conforme a Tabela \ref{tab:datasets}.\\
 
 \begin{table}[htb!]
-\caption{\label{tab:bridges} Pontes anti-hub contra a $\mathrm{MST}_{\kmax}$ exata, com $n = 4.000$ em toda linha. Ambos os lados compartilham um \ac{k-NNG} exato. A razão de peso e a diferença pontual são as de $\mpts = 1$, que é o pior caso da varredura em todos os conjuntos. A coluna ``dif.\ pontual'' é a maior diferença entre os perfis de peso ordenados, definida na Seção \ref{sec:metrics}, nas unidades de peso do conjunto. A aceleração é a da construção das pontes contra a árvore geradora exata que elas substituem. A coluna ``sem.'' é a quantidade de sementes; o desvio padrão da razão de peso é nulo em todas as linhas, e o da diferença pontual é nulo salvo em \texttt{manifold\_exact}, onde vale 0,0079.}
+\caption{\label{tab:bridges} Pontes anti-hub contra a $\mathrm{MST}_{\kmax}$ exata, com $n = 4.000$ em toda linha. Ambos os lados compartilham um \ac{k-NNG} exato. A razão de peso e a diferença pontual são as de $\mpts = 1$, que é o pior caso da varredura em todos os conjuntos; a coluna ``dif.\ pontual'' é a maior diferença entre os perfis de peso ordenados, definida na Seção \ref{sec:metrics}, nas unidades de peso do conjunto. A coluna ``ARI corte'' é o índice sobre o agrupamento do DBSCAN* em um limiar único, e ``ARI FOSC'' o índice sobre o agrupamento que a seleção por estabilidade extrai, sobre 3 sementes e $\mpts \in \{8, 16, 24\}$; a quantidade de grupos coincide entre os dois braços em todas as 45 comparações. A aceleração é a da construção das pontes contra a árvore geradora exata que elas substituem. As demais colunas vêm de 2 a 8 sementes conforme o conjunto, com desvio padrão nulo na razão de peso em todas as linhas e na diferença pontual salvo em \texttt{manifold\_exact}, onde vale 0,0079.}
 \centering
 \footnotesize
 \begin{tabular}{@{}lrrrrrr@{}}
 \toprule
-conjunto de dados & comp. & sem. & razão de peso & ARI & dif.\ pontual & aceleração \\
+conjunto de dados & comp. & razão de peso & ARI corte & ARI FOSC & dif.\ pontual & aceleração \\
 \midrule
-\texttt{manifold\_c32}  & 32 & 2 & 1,00022 & 1,0000 & 0,4612 & 18,2$\times$ \\
-\texttt{manifold\_c24}  & 24 & 3 & 1,00024 & 1,0000 & 0,3748 & 36,0$\times$ \\
-\texttt{manifold\_exact}& 16 & 8 & 1,00000 & 1,0000 & 0,0199 & 12,1$\times$ \\
-\texttt{manifold\_c8}   & 8  & 2 & 1,00001 & 1,0000 & 0,0210 & 19,0$\times$ \\
-\texttt{sift1m}         & 2  & 5 & 1,00000 & 1,0000 & 0,0000 & 10,5$\times$ \\
+\texttt{manifold\_c32}  & 32 & 1,00022 & 1,0000 & 0,9990 & 0,4612 & 18,2$\times$ \\
+\texttt{manifold\_c24}  & 24 & 1,00024 & 1,0000 & 0,9995 & 0,3748 & 36,0$\times$ \\
+\texttt{manifold\_exact}& 16 & 1,00000 & 1,0000 & 0,9997 & 0,0199 & 12,1$\times$ \\
+\texttt{manifold\_c8}   & 8  & 1,00001 & 1,0000 & 1,0000 & 0,0210 & 19,0$\times$ \\
+\texttt{sift1m}         & 2  & 1,00000 & 1,0000 & 0,9992 & 0,0000 & 10,5$\times$ \\
 \bottomrule
 \end{tabular}\\
 Fonte: Autoral.
 \end{table}
 
-O pior caso observado em qualquer configuração é uma árvore geradora 0,024\% mais pesada que a ótima, com \ac{ARI} do DBSCAN* exatamente 1,0000, por 10,5 a 36 vezes menos trabalho. A razão de peso é uma afirmação sobre as alturas de fusão do dendrograma, de modo que o \ac{ARI} unitário é a consequência esperada: a estimativa produz árvores cuja sequência de fusões é indistinguível da exata nos limiares que importam para a extração de grupos. O mesmo efeito é observável fora da escala em que a referência exata é viável, e a medição correspondente está na Seção \ref{sec:res-sensitivity}: em $n = 50.000$, o \ac{k-NNG} de \texttt{manifold\_wide} se divide em 300 componentes e as pontes o reduzem a exatamente um, em todas as sementes. Essa contagem usa a grandeza corrigida descrita na Seção \ref{sec:metrics}; a versão inicial era registrada depois de as pontes serem incorporadas à rotulação, e por isso lia 1 por construção.\\
+O pior caso observado em qualquer configuração é uma árvore geradora 0,024\% mais pesada que a ótima, por 10,5 a 36 vezes menos trabalho. A razão de peso é uma afirmação sobre as alturas de fusão do dendrograma, de modo que o \ac{ARI} unitário é a consequência esperada: a estimativa produz árvores cuja sequência de fusões é indistinguível da exata nos limiares que importam para a extração de grupos. O mesmo efeito é observável fora da escala em que a referência exata é viável, e a medição correspondente está na Seção \ref{sec:res-sensitivity}: em $n = 50.000$, o \ac{k-NNG} de \texttt{manifold\_wide} se divide em 300 componentes e as pontes o reduzem a exatamente um, em todas as sementes. Essa contagem usa a grandeza corrigida descrita na Seção \ref{sec:metrics}; a versão inicial era registrada depois de as pontes serem incorporadas à rotulação, e por isso lia 1 por construção.\\
 
 A coluna de \ac{ARI} carrega uma ressalva, estabelecida durante a ablação da Seção \ref{sec:res-connectivity}. O limiar em que ambas as árvores são cortadas é o peso médio das arestas da árvore exata, que fica bem abaixo das alturas de fusão que uma ponte afeta, e os dois braços desta tabela compartilham todas as arestas do \ac{k-NNG} por construção. As duas rotulações concordam, portanto, sobre as arestas curtas, independentemente do que as pontes fizeram, e um valor de 1,0000 reflete em parte essa insensibilidade, além da qualidade da estimativa. A razão de peso e a diferença pontual entre os perfis comparam as árvores diretamente e não compartilham essa limitação.\\
+
+O \ac{ARI} sob \ac{FOSC} fica entre 0,9975 e 1,0000 nas 45 comparações, com médias por conjunto de 0,9990 a 1,0000 e igualdade exata em toda semente apenas em \texttt{manifold\_c8}. A diferença em relação à coluna do corte único é pequena em magnitude e informativa em natureza: a quantidade de grupos que as duas hierarquias produzem coincide em todas as comparações, de modo que as pontes recuperam a estrutura de componentes sem exceção, e o que difere é a atribuição de um punhado de pontos. O corte único no peso médio não exibe essa diferença, pelo motivo exposto no parágrafo anterior, e é por isso que ambas as colunas são reportadas.\\
 
 A diferença pontual acrescenta ao quadro algo que a razão de peso não mostra. Nos dois conjuntos em que o peso total da árvore exata foi registrado, ela pode ser lida contra a altura média de fusão: em \texttt{manifold\_c24} a maior diferença é de 0,3748 contra uma altura média de 0,8088, ou 46\%, e em \texttt{manifold\_exact} é de 0,0199 contra 1,2802, ou 1,6\%. Uma razão de peso de 1,00024 convive, portanto, com uma única fusão deslocada em quase metade da altura média. O agregado e o extremo respondem a perguntas diferentes, e é por isso que ambos são reportados: a hierarquia que a estimativa produz é indistinguível da exata em quase toda a sua extensão, e difere de forma visível em um ponto.\\
 
@@ -318,6 +320,40 @@ O comportamento em tempo decorre de onde cada fase executa. Ao longo dos sete pa
 Elevar $\omega$ também eleva a parcela da construção que os dispositivos executam. Em $m \ge 8$, a fase de instâncias acelera de 3,83 a 3,87 vezes em quatro dispositivos sob $\omega = 0{,}05$, e de 3,94 a 3,99 sob $\omega = 1{,}00$ em \texttt{sift1m}; em \texttt{glove100}, de 3,82 a 3,91 contra 3,90 a 3,98. Em $m = 64$ sobre quatro dispositivos, a fração paralela $f$ sobe de 0,100 para 0,189 em \texttt{sift1m} e de 0,104 para 0,208 em \texttt{glove100}.\\
 
 Uma configuração intermediária foi medida em \texttt{sift1m}. Em $\omega = 0{,}50$ a fronteira situa-se entre as duas, e a construção particionada mais rápida de toda a grade está ali: 8,13\,s com revocação 0,9694 e 84,1\,MB residentes, em $m = 8$. A configuração mais rápida e a mais precisa a uma dada residência não coincidem.\\
+
+% =====================================================================
+\section{A revocação antes do passo de reparo\label{sec:res-premerge}}
+% =====================================================================
+
+As seções anteriores reportam a revocação do grafo concluído. Esta separa as duas fases que a produzem: a Tabela \ref{tab:premerge} mede o grafo mesclado com o passo de reparo desativado, isto é, exatamente o que a fase de instâncias entrega aos dispositivos.\\
+
+\begin{table}[htb!]
+\caption{\label{tab:premerge} Revocação do grafo mesclado antes de qualquer rodada de reparo, $n = 5 \times 10^5$, $\kmax = 32$. A linha $m = 1$ não particiona e não executa reparo em nenhuma configuração, de modo que ali o valor é o do grafo final. Uma \ac{GPU} RTX 4070 Ti SUPER; a revocação é independente do dispositivo.}
+\centering
+\footnotesize
+\begin{tabular}{@{}llrrrrrrr@{}}
+\toprule
+conjunto & $\omega$ & $m=1$ & $m=2$ & $m=4$ & $m=8$ & $m=16$ & $m=32$ & $m=64$ \\
+\midrule
+\texttt{sift1m}
+  & 0,05 & 0,9673 & 0,5134 & 0,2677 & 0,1353 & 0,0675 & 0,0333 & 0,0170 \\
+  & 0,50 & 0,9672 & 0,6786 & 0,4270 & 0,2433 & 0,1310 & 0,0674 & 0,0344 \\
+  & 1,00 & 0,9672 & 0,7997 & 0,5822 & 0,3726 & 0,2151 & 0,1149 & 0,0601 \\
+\midrule
+\texttt{glove100}
+  & 0,05 & 0,7137 & 0,4106 & 0,2241 & 0,1219 & 0,0640 & 0,0332 & 0,0172 \\
+  & 0,50 & 0,7131 & 0,5314 & 0,3508 & 0,2104 & 0,1188 & 0,0649 & 0,0341 \\
+  & 1,00 & 0,7137 & 0,6258 & 0,4754 & 0,3164 & 0,1903 & 0,1071 & 0,0580 \\
+\bottomrule
+\end{tabular}\\
+Fonte: Autoral.
+\end{table}
+
+A revocação antes do reparo acompanha a fração do conjunto que cada instância vê. Com blocos tomados de uma permutação aleatória, um vértice é comparado, dentro de sua instância, contra $(1+\omega)/m$ do conjunto, e é essa fração que a tabela reproduz: em $\omega = 0{,}05$ a previsão é de 0,131 em $m = 8$ contra 0,1353 medidos, e de 0,0164 em $m = 64$ contra 0,0170. Em $\omega = 1{,}00$ o medido excede a previsão por um fator de até dois, porque os pontos de sobreposição são sorteados independentemente por instância e a mesclagem recebe cada aresta pelos seus dois extremos, de modo que a cobertura efetiva é maior que a fração nominal.\\
+
+A consequência é que, em contagens altas de instâncias, a maior parte da qualidade final do grafo é produzida pelo passo de reparo e não pela fase de instâncias. Em \texttt{sift1m} com $m = 8$ e $\omega = 0{,}05$, os dispositivos entregam 0,1353 e o grafo concluído alcança 0,9672, de modo que 86\% do resultado vem da fase que executa no hospedeiro. Em $m = 32$ com o mesmo $\omega$ a fração sobe para 96\%, e em $m = 64$ com $\omega = 1{,}00$ ela é de 94\%. Elevar a sobreposição desloca essa divisão na direção dos dispositivos, que é o efeito que a Seção \ref{sec:res-overlap} mede pelo lado do tempo: em $m = 64$, passar de $\omega = 0{,}05$ para $\omega = 1{,}00$ multiplica por 3,5 a revocação que a fase de instâncias entrega.\\
+
+Essa leitura delimita a contribuição dos aceleradores neste método. Eles produzem um grafo inicial cuja qualidade isolada é baixa em contagens altas de instâncias, e o que justifica a decomposição não é a qualidade desse grafo, e sim que ele é produzido sob uma residência por dispositivo que não cresce com $n$, conforme a Seção \ref{sec:res-memory}. A Seção \ref{sec:disc-category} retoma o ponto.\\
 
 % =====================================================================
 \section{Construção em escala\label{sec:res-scale}}
