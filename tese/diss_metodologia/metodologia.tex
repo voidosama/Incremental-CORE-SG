@@ -248,11 +248,11 @@ A Figura \ref{fig:antihub} ilustra os dois mecanismos. O painel (a) mostra a ass
   \draw[ar] (a5) -- (u);
   \node[lb, anchor=east] at (-0.12, 0.16) {$v$};
   \node[lb, anchor=west] at ( 1.98, 0.30) {$u$};
-  \node[lb, anchor=north] at (0.0,-1.55) {$\mathrm{rd}(v) = 6$ \quad $\mathrm{rd}(u) = 1$};
-  \node[cp, anchor=north] at (0.15,-2.00) {(a) interior contra borda};
+  \node[lb, anchor=north] at (0.0,-1.95) {$\mathrm{rd}(v) = 6$ \quad $\mathrm{rd}(u) = 1$};
+  \node[cp, anchor=north] at (0.15,-2.40) {(a) interior contra borda};
 \end{scope}
 % ---------- painel (b) ----------
-\begin{scope}[xshift=6.4cm]
+\begin{scope}[xshift=5.6cm]
   % componente denso
   \foreach \x/\y in {-0.9/0.55, -0.55/0.85, -0.2/0.6, -0.75/0.2, -0.4/0.35,
                      -0.05/0.15, -0.95/-0.2, -0.55/-0.15, -0.2/-0.35,
@@ -260,22 +260,26 @@ A Figura \ref{fig:antihub} ilustra os dois mecanismos. O painel (a) mostra a ass
      \node[pt] at (\x,\y) {};
   \node[hi] (di) at (-0.45,0.0) {};
   \node[hi] (db) at ( 0.55,0.35) {};
-  \node[lb, anchor=south] at (-0.45,-1.30) {denso};
+  \node[lb, anchor=south] at (-0.35, 1.15) {denso};
   % componente esparso
   \foreach \x/\y in {3.05/0.75, 3.85/0.55, 4.55/0.8, 3.25/-0.1, 4.65/-0.15,
                      3.15/-0.85, 3.95/-0.95, 4.70/-0.70}
      \node[pt] at (\x,\y) {};
   \node[hi] (si) at (3.95,0.05) {};
   \node[hi] (sb) at (5.25,0.35) {};
-  \node[lb, anchor=south] at (3.95,-1.30) {esparso};
-  % anotacoes
-  \node[lb, anchor=east]       at (-0.60, 0.02) {$\mathrm{rd}=20$, $\mathrm{score}=1{,}1$};
-  \node[lb, anchor=south west] at ( 0.62, 0.40) {$\mathrm{rd}=6$, $\mathrm{score}=0{,}30$};
-  \node[lb, anchor=north east] at ( 3.82,-0.05) {$\mathrm{rd}=5$, $\mathrm{score}=1{,}1$};
-  \node[lb, anchor=south west] at ( 5.32, 0.40) {$\mathrm{rd}=2$, $\mathrm{score}=0{,}40$};
-  \node[lb, anchor=north] at (2.3,-1.60)
+  \node[lb, anchor=south] at (3.90, 1.15) {esparso};
+  % anotacoes: duas linhas, fora das nuvens de pontos
+  \node[lb, anchor=north, align=center] at (-0.35,-1.15)
+     {interior, $\mathrm{rd}=20$\\ $\mathrm{score}=1{,}1$};
+  \node[lb, anchor=west, align=left] at ( 0.75, 0.35)
+     {borda, $\mathrm{rd}=6$\\ $\mathrm{score}=0{,}30$};
+  \node[lb, anchor=north, align=center] at ( 3.95,-1.15)
+     {interior, $\mathrm{rd}=5$\\ $\mathrm{score}=1{,}1$};
+  \node[lb, anchor=west, align=left] at ( 5.45, 0.35)
+     {borda, $\mathrm{rd}=2$\\ $\mathrm{score}=0{,}40$};
+  \node[lb, anchor=north] at (2.3,-1.95)
      {ordenação por $\mathrm{rd}$: $2 < 5 < 6 < 20$ \quad ordenação por $\mathrm{score}$: $0{,}30 < 0{,}40 < 1{,}1$};
-  \node[cp, anchor=north] at (2.3,-2.05) {(b) invariância à densidade local};
+  \node[cp, anchor=north] at (2.3,-2.40) {(b) invariância à densidade local};
 \end{scope}
 \end{tikzpicture}\\
 Fonte: Autoral.
@@ -293,7 +297,7 @@ O tamanho do conjunto selecionado depende de $d$ e de $|E|$, independentemente d
 
 O termo $d$ em $\lceil d \ln |E| \rceil$ é, na formulação acima, a dimensionalidade ambiente, isto é, o número de coordenadas que cada ponto carrega. Isso degenera em alta dimensionalidade: quando $d$ é da ordem de centenas ou milhares, o produto $d \ln |E|$ pode exceder o próprio $n$, e a seleção passa a conter todos os pontos, momento em que a estimativa se torna a \ac{MST} exata que ela existe para substituir.\\
 
-A alternativa implementada substitui $d$ por uma dimensionalidade \ac{ID} estimada por máxima verossimilhança a partir dos raios de vizinhança já armazenados \cite{levina_bickel}, agregada entre os pontos pela média harmônica \cite{mackay_ghahramani}, que é o agrupamento não enviesado desse estimador e o único que tolera estimativas locais explodidas. O estimador é gratuito no sentido de que consome apenas as distâncias que o \ac{k-NNG} já contém, ao custo de $O(n k)$. Um limitador adicional, expresso sobre o custo em operações de par em lugar da contagem de anti-hubs, limita o custo quando o estimador de dimensionalidade não é confiável. A Seção \ref{sec:res-sensitivity} apresenta a comparação medida entre as duas regras.\\
+A alternativa implementada substitui $d$ pela \ac{ID} estimada por máxima verossimilhança a partir dos raios de vizinhança já armazenados \cite{levina_bickel}, agregada entre os pontos pela média harmônica \cite{mackay_ghahramani}, que é o agrupamento não enviesado desse estimador e o único que tolera estimativas locais explodidas. O estimador é gratuito no sentido de que consome apenas as distâncias que o \ac{k-NNG} já contém, ao custo de $O(n k)$. Um limitador adicional, expresso sobre o custo em operações de par em lugar da contagem de anti-hubs, limita o custo quando o estimador de dimensionalidade não é confiável. A Seção \ref{sec:res-sensitivity} apresenta a comparação medida entre as duas regras.\\
 
 \subsection{Cota por componente\label{sec:quota}}
 

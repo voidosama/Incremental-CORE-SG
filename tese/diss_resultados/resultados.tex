@@ -82,7 +82,8 @@ A Figura \ref{fig:components} reporta a contagem de componentes do \ac{k-NNG} so
   grid=both, grid style={black!12},
   legend style={font=\tiny, at={(0.5,-0.20)}, anchor=north,
                 legend columns=4, draw=black!30, legend cell align=left,
-                /tikz/every even column/.append style={column sep=1mm}},
+                /tikz/every even column/.append style={column sep=1mm},
+                /tikz/every odd column/.append style={column sep=1mm}},
   legend image post style={scale=0.55},
   label style={font=\footnotesize}, tick label style={font=\footnotesize},
   every axis plot/.append style={thick, mark size=1.2pt}
@@ -260,13 +261,15 @@ Fonte: Autoral.
 
 \begin{figure}[htb!]
 \centering
-\caption{\label{fig:overlap} Os sete pares de residência comparável da Tabela \ref{tab:overlap}. Os círculos vazados são as configurações com $\omega = 0{,}05$ e os preenchidos as suas parceiras com $\omega = 1{,}00$; cada seta liga um par. Uma seta que aponta para cima e para a esquerda indica que a segunda configuração ocupa menos memória e alcança revocação maior, o que ocorre nos sete pares.}
+\caption{\label{fig:overlap} Os sete pares de residência comparável da Tabela \ref{tab:overlap}, com escalas verticais distintas por conjunto de dados. Cada seta parte da configuração com $\omega = 0{,}05$, em círculo vazado, e chega à sua parceira com $\omega = 1{,}00$, em círculo preenchido. Nos sete pares a seta sobe, isto é, a parceira alcança revocação maior, e desloca-se para a esquerda, isto é, ocupa menos memória; o deslocamento horizontal é de 6 a 12\%, e por isso pequeno em escala logarítmica.}
 \begin{tikzpicture}
 \begin{axis}[
   width=0.47\textwidth, height=6.0cm,
   xlabel={maior instância residente (MB)}, ylabel={revocação},
   xmode=log, log basis x=10,
-  xmin=11, xmax=150, ymin=0.944, ymax=0.976,
+  xtick={15,30,60,120}, xticklabels={15,30,60,120},
+  minor xtick={20,25,40,50,80,100},
+  xmin=10.5, xmax=175, ymin=0.944, ymax=0.977,
   title={\footnotesize \texttt{sift1m}},
   grid=both, grid style={black!12},
   label style={font=\footnotesize}, tick label style={font=\footnotesize},
@@ -274,9 +277,9 @@ Fonte: Autoral.
 ]
 \addplot[only marks, mark=o, black!55] coordinates {(61.6,0.9672) (30.9,0.9594) (15.5,0.9493)};
 \addplot[only marks, mark=*, black] coordinates {(56.4,0.9702) (28.9,0.9669) (14.6,0.9645)};
-\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:61.6,0.9672) -- (axis cs:56.4,0.9702);
-\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:30.9,0.9594) -- (axis cs:28.9,0.9669);
-\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:15.5,0.9493) -- (axis cs:14.6,0.9645);
+\draw[-{Latex[length=2mm]}, black!70] (axis cs:61.6,0.9672) -- (axis cs:56.4,0.9702);
+\draw[-{Latex[length=2mm]}, black!70] (axis cs:30.9,0.9594) -- (axis cs:28.9,0.9669);
+\draw[-{Latex[length=2mm]}, black!70] (axis cs:15.5,0.9493) -- (axis cs:14.6,0.9645);
 \end{axis}
 \end{tikzpicture}
 \hfill
@@ -285,7 +288,9 @@ Fonte: Autoral.
   width=0.47\textwidth, height=6.0cm,
   xlabel={maior instância residente (MB)}, ylabel={revocação},
   xmode=log, log basis x=10,
-  xmin=11, xmax=150, ymin=0.66, ymax=0.80,
+  xtick={15,30,60,120}, xticklabels={15,30,60,120},
+  minor xtick={20,25,40,50,80,100},
+  xmin=10.5, xmax=175, ymin=0.66, ymax=0.80,
   title={\footnotesize \texttt{glove100}},
   grid=both, grid style={black!12},
   label style={font=\footnotesize}, tick label style={font=\footnotesize},
@@ -293,10 +298,10 @@ Fonte: Autoral.
 ]
 \addplot[only marks, mark=o, black!55] coordinates {(110.0,0.7492) (55.3,0.7317) (27.8,0.7037) (13.9,0.6745)};
 \addplot[only marks, mark=*, black] coordinates {(96.7,0.7773) (50.7,0.7646) (25.9,0.7476) (13.1,0.7289)};
-\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:110.0,0.7492) -- (axis cs:96.7,0.7773);
-\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:55.3,0.7317) -- (axis cs:50.7,0.7646);
-\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:27.8,0.7037) -- (axis cs:25.9,0.7476);
-\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:13.9,0.6745) -- (axis cs:13.1,0.7289);
+\draw[-{Latex[length=2mm]}, black!70] (axis cs:110.0,0.7492) -- (axis cs:96.7,0.7773);
+\draw[-{Latex[length=2mm]}, black!70] (axis cs:55.3,0.7317) -- (axis cs:50.7,0.7646);
+\draw[-{Latex[length=2mm]}, black!70] (axis cs:27.8,0.7037) -- (axis cs:25.9,0.7476);
+\draw[-{Latex[length=2mm]}, black!70] (axis cs:13.9,0.6745) -- (axis cs:13.1,0.7289);
 \end{axis}
 \end{tikzpicture}\\
 Fonte: Autoral.
@@ -347,7 +352,8 @@ Fonte: Autoral.
   grid=both, grid style={black!12},
   legend style={font=\tiny, at={(0.5,-0.22)}, anchor=north,
                 legend columns=2, draw=black!30, legend cell align=left,
-                /tikz/every even column/.append style={column sep=2mm}},
+                /tikz/every even column/.append style={column sep=2mm},
+                /tikz/every odd column/.append style={column sep=1mm}},
   legend image post style={scale=0.6},
   label style={font=\footnotesize}, tick label style={font=\footnotesize},
   every axis plot/.append style={thick, mark size=1.8pt}
@@ -371,39 +377,36 @@ A Figura \ref{fig:scalemem} dispõe as três trajetórias de memória dessas con
 
 A constância da residência decorre da constância do objeto que a determina. A maior instância contém de 523.770 a 524.780 vértices ao longo de toda a faixa, uma variação de 0,2\% enquanto $n$ cresce cinco vezes, porque a Equação \eqref{eq:instancesize} fixa o tamanho da instância em $(1+\omega)\,n/m$ e a quantidade de instâncias foi elevada em proporção a $n$. É a razão $n/m$, e não $n$, que o dispositivo precisa acomodar.\\
 
-O custo total cresce aproximadamente em proporção ao tamanho do conjunto. A vazão fica entre 19,4 e 21,8 segundos por milhão de pontos ao longo da faixa, sem tendência monotônica, o que indica que nenhuma fase passa a dominar à medida que a escala sobe. A distribuição entre as fases confirma isso: a fase de instâncias responde por 11,3 a 12,5\% do total e o passo de reparo por 77,6 a 79,8\%, em todos os cinco tamanhos. O gargalo identificado na Seção \ref{sec:res-scaling} é, portanto, estável em escala, e não um efeito do tamanho particular ali medido. A Figura \ref{fig:phases} apresenta a decomposição completa.\\
+O custo total cresce aproximadamente em proporção ao tamanho do conjunto. A vazão fica entre 19,4 e 21,8 segundos por milhão de pontos ao longo da faixa, sem tendência monotônica, o que indica que nenhuma fase passa a dominar à medida que a escala sobe. A distribuição entre as fases confirma isso: a fase de instâncias responde por 11,3 a 12,5\% do total e o passo de reparo por 77,6 a 79,8\%, em todos os cinco tamanhos. O gargalo identificado na Seção \ref{sec:res-scaling} é, portanto, estável em escala, e não um efeito do tamanho particular ali medido. A Figura \ref{fig:phases} apresenta a repartição por fase.\\
 
 \begin{figure}[htb!]
 \centering
-\caption{\label{fig:phases} Distribuição do tempo de construção entre as fases, como fração do total, para os cinco tamanhos da Tabela \ref{tab:scale}. As proporções permanecem estáveis ao longo de um aumento de cinco vezes em $n$: o passo de reparo responde por 77,6 a 79,8\% e a fase de instâncias, a única executada nos dispositivos, por 11,3 a 12,5\%. A faixa ``outras'' reúne o reparo de conectividade, a rotulação de componentes e a instrumentação.}
+\caption{\label{fig:phases} Distribuição do tempo de construção entre as fases, como fração do total, para os cinco tamanhos da Tabela \ref{tab:scale}. As proporções permanecem estáveis ao longo de um aumento de cinco vezes em $n$: o passo de reparo responde por 77,6 a 79,8\% e a fase de instâncias, a única executada nos dispositivos, por 11,3 a 12,5\%. A faixa ``demais fases do hospedeiro'' soma o estágio, a mesclagem, o reparo de conectividade, a rotulação de componentes e a instrumentação, e responde por 4,9 a 5,4\%.}
 \begin{tikzpicture}
 \begin{axis}[
   width=0.92\textwidth, height=6.6cm,
-  ybar stacked, bar width=22pt,
+  ybar stacked, bar width=28pt,
   xlabel={$n$ (milhões de pontos)}, ylabel={fração do tempo total (\%)},
   symbolic x coords={10,20,30,40,50},
   xtick=data,
   ymin=0, ymax=100,
   grid=major, grid style={black!12}, axis on top,
   legend style={font=\tiny, at={(0.5,-0.20)}, anchor=north,
-                legend columns=3, draw=black!30, legend cell align=left,
-                /tikz/every even column/.append style={column sep=2mm}},
+                legend columns=2, draw=black!30, legend cell align=left,
+                /tikz/every even column/.append style={column sep=3mm},
+                /tikz/every odd column/.append style={column sep=1mm}},
   legend image post style={scale=0.6},
   label style={font=\footnotesize}, tick label style={font=\footnotesize},
   every axis plot/.append style={draw=black, semithick}
 ]
 \addplot[fill=black!12] coordinates {(10,11.43)(20,12.32)(30,12.47)(40,11.62)(50,11.31)};
 \addlegendentry{instâncias (dispositivos)}
-\addplot[fill=black!28] coordinates {(10,0.65)(20,0.72)(30,0.78)(40,0.67)(50,1.02)};
-\addlegendentry{estágio}
-\addplot[fill=black!44] coordinates {(10,2.97)(20,3.05)(30,3.05)(40,2.72)(50,2.63)};
-\addlegendentry{mesclagem}
 \addplot[fill=black!62] coordinates {(10,79.77)(20,78.04)(30,77.59)(40,79.12)(50,79.17)};
 \addlegendentry{passo de reparo}
-\addplot[fill=black!80] coordinates {(10,3.73)(20,4.27)(30,4.49)(40,4.35)(50,4.38)};
+\addplot[fill=black!85] coordinates {(10,3.73)(20,4.27)(30,4.49)(40,4.35)(50,4.38)};
 \addlegendentry{\textit{hubness} e pontes}
-\addplot[fill=white] coordinates {(10,1.41)(20,1.57)(30,1.60)(40,1.51)(50,1.48)};
-\addlegendentry{outras}
+\addplot[fill=white] coordinates {(10,5.03)(20,5.34)(30,5.43)(40,4.90)(50,5.13)};
+\addlegendentry{demais fases do hospedeiro}
 \end{axis}
 \end{tikzpicture}\\
 Fonte: Autoral.
@@ -453,7 +456,8 @@ Fonte: Autoral.
   grid=both, grid style={black!12},
   legend style={font=\tiny, at={(0.5,-0.20)}, anchor=north,
                 legend columns=2, draw=black!30, legend cell align=left,
-                /tikz/every even column/.append style={column sep=2mm}},
+                /tikz/every even column/.append style={column sep=2mm},
+                /tikz/every odd column/.append style={column sep=1mm}},
   legend image post style={scale=0.6},
   label style={font=\footnotesize}, tick label style={font=\footnotesize},
   every axis plot/.append style={thick, mark size=1.8pt}
@@ -468,7 +472,7 @@ Fonte: Autoral.
 \addlegendentry{construção inteira, $m = 64$}
 \addplot[black!70, densely dashdotted, no markers] coordinates {(1,1.000)(2,1.170)(3,1.240)(4,1.278)};
 \addlegendentry{lei de Amdahl, $f = 0{,}290$}
-\node[font=\tiny, anchor=west, black!70] at (axis cs:3.05,1.52) {limite de Amdahl: 1,41 para $p \to \infty$};
+\node[font=\tiny, anchor=east, black!70] at (axis cs:4.10,1.52) {limite de Amdahl: 1,41 para $p \to \infty$};
 \end{axis}
 \end{tikzpicture}\\
 Fonte: Autoral.
@@ -575,7 +579,8 @@ Fonte: Autoral.
   grid=both, grid style={black!12},
   legend style={font=\tiny, at={(0.5,-0.22)}, anchor=north,
                 legend columns=3, draw=black!30, legend cell align=left,
-                /tikz/every even column/.append style={column sep=2mm}},
+                /tikz/every even column/.append style={column sep=2mm},
+                /tikz/every odd column/.append style={column sep=1mm}},
   legend image post style={scale=0.6},
   label style={font=\footnotesize}, tick label style={font=\footnotesize},
   every axis plot/.append style={thick, mark size=1.9pt}
