@@ -258,7 +258,51 @@ conjunto & configuração & residente & revocação & total \\
 Fonte: Autoral.
 \end{table}
 
-O braço de $\omega = 1{,}00$ ocupa menos memória no dispositivo e alcança revocação maior nos sete pares: de 0,0029 a 0,0152 em \texttt{sift1m} e de 0,0281 a 0,0544 em \texttt{glove100}. O tempo total cai em cinco dos sete e sobe em dois.\\
+\begin{figure}[htb!]
+\centering
+\caption{\label{fig:overlap} Os sete pares de residência comparável da Tabela \ref{tab:overlap}. Os círculos vazados são as configurações com $\omega = 0{,}05$ e os preenchidos as suas parceiras com $\omega = 1{,}00$; cada seta liga um par. Uma seta que aponta para cima e para a esquerda indica que a segunda configuração ocupa menos memória e alcança revocação maior, o que ocorre nos sete pares.}
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.47\textwidth, height=6.0cm,
+  xlabel={maior instância residente (MB)}, ylabel={revocação},
+  xmode=log, log basis x=10,
+  xmin=11, xmax=150, ymin=0.944, ymax=0.976,
+  title={\footnotesize \texttt{sift1m}},
+  grid=both, grid style={black!12},
+  label style={font=\footnotesize}, tick label style={font=\footnotesize},
+  every axis plot/.append style={thick, mark size=1.7pt}
+]
+\addplot[only marks, mark=o, black!55] coordinates {(61.6,0.9672) (30.9,0.9594) (15.5,0.9493)};
+\addplot[only marks, mark=*, black] coordinates {(56.4,0.9702) (28.9,0.9669) (14.6,0.9645)};
+\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:61.6,0.9672) -- (axis cs:56.4,0.9702);
+\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:30.9,0.9594) -- (axis cs:28.9,0.9669);
+\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:15.5,0.9493) -- (axis cs:14.6,0.9645);
+\end{axis}
+\end{tikzpicture}
+\hfill
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.47\textwidth, height=6.0cm,
+  xlabel={maior instância residente (MB)}, ylabel={revocação},
+  xmode=log, log basis x=10,
+  xmin=11, xmax=150, ymin=0.66, ymax=0.80,
+  title={\footnotesize \texttt{glove100}},
+  grid=both, grid style={black!12},
+  label style={font=\footnotesize}, tick label style={font=\footnotesize},
+  every axis plot/.append style={thick, mark size=1.7pt}
+]
+\addplot[only marks, mark=o, black!55] coordinates {(110.0,0.7492) (55.3,0.7317) (27.8,0.7037) (13.9,0.6745)};
+\addplot[only marks, mark=*, black] coordinates {(96.7,0.7773) (50.7,0.7646) (25.9,0.7476) (13.1,0.7289)};
+\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:110.0,0.7492) -- (axis cs:96.7,0.7773);
+\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:55.3,0.7317) -- (axis cs:50.7,0.7646);
+\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:27.8,0.7037) -- (axis cs:25.9,0.7476);
+\draw[-{Latex[length=1.5mm]}, black!70] (axis cs:13.9,0.6745) -- (axis cs:13.1,0.7289);
+\end{axis}
+\end{tikzpicture}\\
+Fonte: Autoral.
+\end{figure}
+
+A Figura \ref{fig:overlap} apresenta os mesmos pares no plano de residência e revocação. O braço de $\omega = 1{,}00$ ocupa menos memória no dispositivo e alcança revocação maior nos sete pares: de 0,0029 a 0,0152 em \texttt{sift1m} e de 0,0281 a 0,0544 em \texttt{glove100}. O tempo total cai em cinco dos sete e sobe em dois.\\
 
 O comportamento em tempo decorre de onde cada fase executa. Ao longo dos sete pares, o passo de reparo é de 2,5\% a 30,0\% mais curto em $\omega = 1{,}00$ e a fase de instâncias de 72\% a 87\% mais longa, de modo que a troca só compensa quando há dispositivos para dividir a fase maior. Em $m = 64$ em \texttt{sift1m}, uma \ac{GPU} leva 13,41\,s em $\omega = 0{,}05$ e 15,77\,s em $\omega = 1{,}00$; quatro \ac{GPU}s levam 10,26\,s e 10,03\,s.\\
 
@@ -290,11 +334,81 @@ $5\times10^7$ & 100 & 1090,2\,s & 293,9\,MB & 50,5\,GB & 0,9970 \\
 Fonte: Autoral.
 \end{table}
 
-A residência por dispositivo varia em 0,6\,MB ao longo de um aumento de cinco vezes em $n$, ao passo que a memória do hospedeiro cresce linearmente, a 1001 bytes por ponto. A revocação cai de 0,9993 para 0,9970 na mesma faixa. A construção de $5 \times 10^7$ pontos conclui em 18,2 minutos.\\
+\begin{figure}[htb!]
+\centering
+\caption{\label{fig:scalemem} Memória exigida pelas construções da Tabela \ref{tab:scale}, em escala logarítmica. A residência por dispositivo da construção decomposta permanece em torno de 0,29\,GB ao longo de toda a faixa, enquanto a memória do hospedeiro e o custo de dispositivo de uma construção de instância única crescem linearmente com $n$. A linha horizontal é a capacidade de um acelerador de 8\,GB, que a construção de instância única excede a partir de $1{,}5 \times 10^7$ pontos; a construção decomposta permanece a mais de uma ordem de grandeza dela.}
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.92\textwidth, height=7.0cm,
+  xlabel={$n$ (milhões de pontos)}, ylabel={memória (GB)},
+  ymode=log, log basis y=10,
+  xmin=5, xmax=55, ymin=0.15, ymax=90,
+  xtick={10,20,30,40,50},
+  grid=both, grid style={black!12},
+  legend style={font=\tiny, at={(0.5,-0.22)}, anchor=north,
+                legend columns=2, draw=black!30, legend cell align=left,
+                /tikz/every even column/.append style={column sep=2mm}},
+  legend image post style={scale=0.6},
+  label style={font=\footnotesize}, tick label style={font=\footnotesize},
+  every axis plot/.append style={thick, mark size=1.8pt}
+]
+\addplot[mark=square*, black!45, dashed] coordinates {(10,10.46)(20,20.53)(30,30.60)(40,40.68)(50,50.45)};
+\addlegendentry{hospedeiro, construção decomposta}
+\addplot[mark=triangle*, black, dotted] coordinates {(10,5.60)(20,11.20)(30,16.80)(40,22.40)(50,28.00)};
+\addlegendentry{dispositivo, construção de instância única}
+\addplot[mark=*, black] coordinates {(10,0.2933)(20,0.2937)(30,0.2938)(40,0.2938)(50,0.2939)};
+\addlegendentry{dispositivo, construção decomposta}
+\addplot[black!70, thick, densely dashdotted, no markers, forget plot] coordinates {(5,8.590)(55,8.590)};
+\node[font=\tiny, anchor=south east, black!70] at (axis cs:54,8.9) {capacidade do acelerador, 8\,GB};
+\node[font=\tiny, anchor=west, black!70] at (axis cs:16.2,3.2) {excede aqui, em 15,3 milhões};
+\draw[black!70, thin] (axis cs:15.34,8.590) -- (axis cs:16.1,3.6);
+\end{axis}
+\end{tikzpicture}\\
+Fonte: Autoral.
+\end{figure}
+
+A Figura \ref{fig:scalemem} dispõe as três trajetórias de memória dessas construções. A residência por dispositivo varia em 0,6\,MB ao longo de um aumento de cinco vezes em $n$, ao passo que a memória do hospedeiro cresce linearmente, a 1001 bytes por ponto. A revocação cai de 0,9993 para 0,9970 na mesma faixa. A construção de $5 \times 10^7$ pontos conclui em 18,2 minutos.\\
 
 A constância da residência decorre da constância do objeto que a determina. A maior instância contém de 523.770 a 524.780 vértices ao longo de toda a faixa, uma variação de 0,2\% enquanto $n$ cresce cinco vezes, porque a Equação \eqref{eq:instancesize} fixa o tamanho da instância em $(1+\omega)\,n/m$ e a quantidade de instâncias foi elevada em proporção a $n$. É a razão $n/m$, e não $n$, que o dispositivo precisa acomodar.\\
 
-O custo total cresce aproximadamente em proporção ao tamanho do conjunto. A vazão fica entre 19,4 e 21,8 segundos por milhão de pontos ao longo da faixa, sem tendência monotônica, o que indica que nenhuma fase passa a dominar à medida que a escala sobe. A distribuição entre as fases confirma isso: a fase de instâncias responde por 11,3 a 12,5\% do total e o passo de reparo por 77,6 a 79,8\%, em todos os cinco tamanhos. O gargalo identificado na Seção \ref{sec:res-scaling} é, portanto, estável em escala, e não um efeito do tamanho particular ali medido.\\
+O custo total cresce aproximadamente em proporção ao tamanho do conjunto. A vazão fica entre 19,4 e 21,8 segundos por milhão de pontos ao longo da faixa, sem tendência monotônica, o que indica que nenhuma fase passa a dominar à medida que a escala sobe. A distribuição entre as fases confirma isso: a fase de instâncias responde por 11,3 a 12,5\% do total e o passo de reparo por 77,6 a 79,8\%, em todos os cinco tamanhos. O gargalo identificado na Seção \ref{sec:res-scaling} é, portanto, estável em escala, e não um efeito do tamanho particular ali medido. A Figura \ref{fig:phases} apresenta a decomposição completa.\\
+
+\begin{figure}[htb!]
+\centering
+\caption{\label{fig:phases} Distribuição do tempo de construção entre as fases, como fração do total, para os cinco tamanhos da Tabela \ref{tab:scale}. As proporções permanecem estáveis ao longo de um aumento de cinco vezes em $n$: o passo de reparo responde por 77,6 a 79,8\% e a fase de instâncias, a única executada nos dispositivos, por 11,3 a 12,5\%. A faixa ``outras'' reúne o reparo de conectividade, a rotulação de componentes e a instrumentação.}
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.92\textwidth, height=6.6cm,
+  ybar stacked, bar width=22pt,
+  xlabel={$n$ (milhões de pontos)}, ylabel={fração do tempo total (\%)},
+  symbolic x coords={10,20,30,40,50},
+  xtick=data,
+  ymin=0, ymax=100,
+  grid=major, grid style={black!12}, axis on top,
+  legend style={font=\tiny, at={(0.5,-0.20)}, anchor=north,
+                legend columns=3, draw=black!30, legend cell align=left,
+                /tikz/every even column/.append style={column sep=2mm}},
+  legend image post style={scale=0.6},
+  label style={font=\footnotesize}, tick label style={font=\footnotesize},
+  every axis plot/.append style={draw=black, semithick}
+]
+\addplot[fill=black!12] coordinates {(10,11.43)(20,12.32)(30,12.47)(40,11.62)(50,11.31)};
+\addlegendentry{instâncias (dispositivos)}
+\addplot[fill=black!28] coordinates {(10,0.65)(20,0.72)(30,0.78)(40,0.67)(50,1.02)};
+\addlegendentry{estágio}
+\addplot[fill=black!44] coordinates {(10,2.97)(20,3.05)(30,3.05)(40,2.72)(50,2.63)};
+\addlegendentry{mesclagem}
+\addplot[fill=black!62] coordinates {(10,79.77)(20,78.04)(30,77.59)(40,79.12)(50,79.17)};
+\addlegendentry{passo de reparo}
+\addplot[fill=black!80] coordinates {(10,3.73)(20,4.27)(30,4.49)(40,4.35)(50,4.38)};
+\addlegendentry{\textit{hubness} e pontes}
+\addplot[fill=white] coordinates {(10,1.41)(20,1.57)(30,1.60)(40,1.51)(50,1.48)};
+\addlegendentry{outras}
+\end{axis}
+\end{tikzpicture}\\
+Fonte: Autoral.
+\end{figure}
+
 
 Três verificações acompanham essas construções. Nenhuma instância foi executada no hospedeiro pelo mecanismo de reserva descrito na Seção \ref{sec:implementation}, e nenhuma reportou falta de memória: as 20 a 100 instâncias de cada construção executaram todas em dispositivo. A estimativa de pontes produziu um único componente antes do reparo de conectividade em todos os cinco tamanhos, de modo que a etapa de reparo nunca foi acionada. E o orçamento de anti-hubs passou de 618 para 676 vértices enquanto $n$ crescia de $10^7$ para $5 \times 10^7$, um aumento de 9\% contra 400\% em $n$, o que é o comportamento que a regra $\lceil d \ln |E| \rceil$ prevê: o conjunto selecionado acompanha o logaritmo da quantidade de arestas, que passou de $2{,}25 \times 10^8$ para $1{,}09 \times 10^9$.\\
 
@@ -327,7 +441,40 @@ A Tabela \ref{tab:scaling} reporta a fase de instâncias e a construção inteir
 Fonte: Autoral.
 \end{table}
 
-A fase de instâncias cai de 3,897\,s para 1,025\,s em $m = 64$, uma aceleração de 3,80 em quatro dispositivos. A construção inteira cai de 13,435\,s para 10,521\,s, uma aceleração de 1,28.\\
+\begin{figure}[htb!]
+\centering
+\caption{\label{fig:speedup} Aceleração contra a quantidade de dispositivos, para os dados da Tabela \ref{tab:scaling}. A fase de instâncias aproxima-se da aceleração ideal; a construção inteira segue a curva de Amdahl calculada com a fração paralela medida em um único dispositivo, $f = 0{,}290$ para $m = 64$. A curva prevê 1,278 em quatro dispositivos e a medição alcança 1,277.}
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.92\textwidth, height=7.0cm,
+  xlabel={dispositivos}, ylabel={aceleração},
+  xmin=0.8, xmax=4.2, ymin=0.9, ymax=4.3,
+  xtick={1,2,3,4}, ytick={1,1.5,2,2.5,3,3.5,4},
+  grid=both, grid style={black!12},
+  legend style={font=\tiny, at={(0.5,-0.20)}, anchor=north,
+                legend columns=2, draw=black!30, legend cell align=left,
+                /tikz/every even column/.append style={column sep=2mm}},
+  legend image post style={scale=0.6},
+  label style={font=\footnotesize}, tick label style={font=\footnotesize},
+  every axis plot/.append style={thick, mark size=1.8pt}
+]
+\addplot[black!35, densely dotted, no markers] coordinates {(1,1)(4,4)};
+\addlegendentry{aceleração ideal}
+\addplot[mark=*, black] coordinates {(1,1.000)(2,2.006)(3,2.933)(4,3.802)};
+\addlegendentry{fase de instâncias, $m = 64$}
+\addplot[mark=square*, black!55, dashed] coordinates {(1,1.000)(2,1.987)(3,2.660)(4,3.894)};
+\addlegendentry{fase de instâncias, $m = 16$}
+\addplot[mark=triangle*, black] coordinates {(1,1.000)(2,1.127)(3,1.130)(4,1.277)};
+\addlegendentry{construção inteira, $m = 64$}
+\addplot[black!70, densely dashdotted, no markers] coordinates {(1,1.000)(2,1.170)(3,1.240)(4,1.278)};
+\addlegendentry{lei de Amdahl, $f = 0{,}290$}
+\node[font=\tiny, anchor=west, black!70] at (axis cs:3.05,1.52) {limite de Amdahl: 1,41 para $p \to \infty$};
+\end{axis}
+\end{tikzpicture}\\
+Fonte: Autoral.
+\end{figure}
+
+A Figura \ref{fig:speedup} apresenta as acelerações. A fase de instâncias cai de 3,897\,s para 1,025\,s em $m = 64$, uma aceleração de 3,80 em quatro dispositivos. A construção inteira cai de 13,435\,s para 10,521\,s, uma aceleração de 1,28.\\
 
 A diferença entre os dois números decorre da parcela da construção que os dispositivos executam. Em $m = 64$ sobre uma \ac{GPU}, a fase de instâncias é 0,290 do total; sobre quatro, é 0,097, porque essa fase encolhe enquanto as fases do hospedeiro não. Em $n = 5 \times 10^7$ a fase de instâncias é de 123,4\,s em 1090,2\,s, ou 0,113, e o passo de reparo é de 863,0\,s, ou 0,792.\\
 
@@ -416,7 +563,38 @@ $1\times10^7$ & 224,57\,M & 9,57\,s  & 310,83\,s \\
 Fonte: Autoral.
 \end{table}
 
-O custo por aresta armazenada permanece entre $3{,}2$ e $5{,}0 \times 10^{-8}$\,s ao longo de uma faixa de 438 vezes na quantidade de arestas, de modo que a extração é linear nas $O(n\kmax)$ arestas que ela percorre, antes que em $n$ isoladamente. O conjunto \texttt{glove100} em $n = 5 \times 10^5$ concorda com \texttt{sift1m} no mesmo $n$: 13,58\,M arestas contra 13,10\,M, e 0,471\,s contra 0,437\,s.\\
+\begin{figure}[htb!]
+\centering
+\caption{\label{fig:extract} Custo de uma consulta contra a quantidade de arestas armazenadas, em escala logarítmica nos dois eixos, para os dados da Tabela \ref{tab:extract}. A reta de referência tem inclinação unitária, isto é, custo proporcional à quantidade de arestas. Os pontos acompanham essa inclinação ao longo de uma faixa de 438 vezes na quantidade de arestas, o que estabelece que a extração é linear nas arestas armazenadas e independente de $n$ por qualquer outra via.}
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.92\textwidth, height=6.8cm,
+  xlabel={arestas armazenadas}, ylabel={uma consulta (s)},
+  xmode=log, log basis x=10, ymode=log, log basis y=10,
+  xmin=3e5, xmax=4e8, ymin=0.012, ymax=20,
+  grid=both, grid style={black!12},
+  legend style={font=\tiny, at={(0.5,-0.22)}, anchor=north,
+                legend columns=3, draw=black!30, legend cell align=left,
+                /tikz/every even column/.append style={column sep=2mm}},
+  legend image post style={scale=0.6},
+  label style={font=\footnotesize}, tick label style={font=\footnotesize},
+  every axis plot/.append style={thick, mark size=1.9pt}
+]
+\addplot[black!40, densely dashed, no markers] coordinates {(4e5,0.016)(3e8,12.0)};
+\addlegendentry{inclinação unitária}
+\addplot[only marks, mark=*, black] coordinates
+  {(512986,0.02567) (5207402,0.21584) (13095488,0.43741) (26497922,0.85255)};
+\addlegendentry{\texttt{sift1m}}
+\addplot[only marks, mark=square*, black!55] coordinates {(13576366,0.47059)};
+\addlegendentry{\texttt{glove100}}
+\addplot[only marks, mark=triangle*, black] coordinates {(224568634,9.56752)};
+\addlegendentry{\texttt{scale}, $n = 10^7$}
+\end{axis}
+\end{tikzpicture}\\
+Fonte: Autoral.
+\end{figure}
+
+A Figura \ref{fig:extract} dispõe esses pontos em escala logarítmica. O custo por aresta armazenada permanece entre $3{,}2$ e $5{,}0 \times 10^{-8}$\,s ao longo de uma faixa de 438 vezes na quantidade de arestas, de modo que a extração é linear nas $O(n\kmax)$ arestas que ela percorre, antes que em $n$ isoladamente. O conjunto \texttt{glove100} em $n = 5 \times 10^5$ concorda com \texttt{sift1m} no mesmo $n$: 13,58\,M arestas contra 13,10\,M, e 0,471\,s contra 0,437\,s.\\
 
 Dentro de um mesmo grafo, o custo cai conforme $\mpts$ sobe. Em $n = 10^6$ ele é de 1,060\,s em $\mpts = 2$ e de 0,791\,s em $\mpts = 32$, uma queda de 25\%. A consulta mais cara é, portanto, a de menor $\mpts$.\\
 

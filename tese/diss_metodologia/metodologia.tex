@@ -85,6 +85,67 @@ A construção parte de uma permutação aleatória de $X$, cortada em $m$ bloco
 
 Três consequências decorrem dessa construção, e são elas que respondem ao problema da Seção \ref{sec:problem-scale}. A memória que uma instância exige é determinada pelo seu próprio tamanho, independentemente do tamanho do conjunto de dados, de modo que um grafo maior do que a memória de um acelerador é processado elevando-se $m$. As instâncias não se comunicam entre si durante a execução e podem portanto ser enfileiradas em qualquer dispositivo livre. E a quantidade de instâncias define a unidade de paralelismo disponível, independentemente de quantos dispositivos a executem; manter $m$ maior ou igual à quantidade de dispositivos é o que mantém todos ocupados.\\
 
+A Figura \ref{fig:instance} ilustra a construção, com a ressalva de que os blocos resultam de um corte sobre a permutação e não de uma divisão do espaço.\\
+
+\begin{figure}[htb!]
+\centering
+\caption{\label{fig:instance} A instância como bloco mais amostra de sobreposição, com $m = 3$. Em (a), o corte é feito sobre uma permutação aleatória dos pontos, de modo que os três blocos são subconjuntos espacialmente entremeados, e não regiões do espaço. Em (b), a instância do bloco 2 reúne os pontos do próprio bloco, em preto, e uma amostra sorteada dos demais blocos, assinalada por um anel; os pontos em cinza-claro não pertencem a esta instância. A amostra dá às três instâncias um conjunto de referência compartilhado e faz com que parte dos pares que cruzariam fronteiras seja comparada dentro da instância.}
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  b1/.style={circle, draw=black!70, fill=white, inner sep=0pt, minimum size=4.2pt},
+  b2/.style={rectangle, draw=black!70, fill=black!30, inner sep=0pt, minimum size=4.2pt},
+  b3/.style={diamond, draw=black!70, fill=black!60, inner sep=0pt, minimum size=4.8pt},
+  faint/.style={circle, draw=black!15, fill=black!8, inner sep=0pt, minimum size=4.2pt},
+  own/.style={rectangle, draw=black, fill=black, inner sep=0pt, minimum size=4.6pt},
+  ovl/.style={circle, draw=black!70, fill=black!25, inner sep=0pt, minimum size=4.2pt},
+  lb/.style={font=\scriptsize}
+]
+% ---------------- (a) a permutacao cortada em tres blocos ----------------
+\draw[black!30] (-0.25,-0.25) rectangle (6.85,4.35);
+\node[b1] at (0.4,2.7) {};  \node[b2] at (1.1,3.4) {};  \node[b3] at (0.7,1.6) {};
+\node[b1] at (1.8,2.2) {};  \node[b3] at (2.4,3.6) {};  \node[b2] at (1.5,0.8) {};
+\node[b1] at (2.9,1.3) {};  \node[b2] at (3.4,2.9) {};  \node[b3] at (2.2,2.6) {};
+\node[b1] at (3.9,1.9) {};  \node[b3] at (0.9,0.5) {};  \node[b2] at (4.4,3.2) {};
+\node[b1] at (3.1,3.8) {};  \node[b3] at (4.8,2.4) {};  \node[b2] at (2.6,0.6) {};
+\node[b1] at (5.3,1.5) {};  \node[b3] at (4.1,0.9) {};  \node[b2] at (5.6,3.5) {};
+\node[b1] at (0.3,3.9) {};  \node[b3] at (5.9,2.8) {};  \node[b2] at (1.9,3.9) {};
+\node[b1] at (3.6,0.4) {};  \node[b3] at (5.1,0.5) {};  \node[b2] at (6.2,1.1) {};
+\node[b1] at (0.6,2.1) {};  \node[b3] at (2.0,1.4) {};  \node[b1] at (4.6,3.9) {};
+\node[b3] at (6.4,3.9) {};  \node[b2] at (3.3,2.0) {};  \node[b1] at (5.5,2.0) {};
+\node[lb, anchor=north] at (3.3,-0.45) {(a) os $m = 3$ blocos};
+\node[b1] at (0.55,-1.15) {};  \node[lb, anchor=west] at (0.75,-1.15) {bloco 1};
+\node[b2] at (2.30,-1.15) {};  \node[lb, anchor=west] at (2.50,-1.15) {bloco 2};
+\node[b3] at (4.05,-1.15) {};  \node[lb, anchor=west] at (4.25,-1.15) {bloco 3};
+% ---------------- (b) a instancia do bloco 2 ----------------
+\begin{scope}[xshift=8.1cm]
+\draw[black!30] (-0.25,-0.25) rectangle (6.85,4.35);
+\node[faint] at (0.4,2.7) {};  \node[faint] at (0.7,1.6) {};
+\node[faint] at (2.4,3.6) {};  \node[faint] at (2.9,1.3) {};
+\node[faint] at (2.2,2.6) {};  \node[faint] at (3.9,1.9) {};
+\node[faint] at (0.9,0.5) {};  \node[faint] at (3.1,3.8) {};
+\node[faint] at (4.8,2.4) {};  \node[faint] at (5.3,1.5) {};
+\node[faint] at (4.1,0.9) {};  \node[faint] at (0.3,3.9) {};
+\node[faint] at (3.6,0.4) {};  \node[faint] at (5.1,0.5) {};
+\node[faint] at (0.6,2.1) {};  \node[faint] at (4.6,3.9) {};
+\node[faint] at (6.4,3.9) {};
+\node[own] at (1.1,3.4) {};  \node[own] at (1.5,0.8) {};  \node[own] at (3.4,2.9) {};
+\node[own] at (4.4,3.2) {};  \node[own] at (2.6,0.6) {};  \node[own] at (5.6,3.5) {};
+\node[own] at (1.9,3.9) {};  \node[own] at (6.2,1.1) {};  \node[own] at (3.3,2.0) {};
+\node[ovl] at (1.8,2.2) {};  \draw[black!70] (1.8,2.2) circle (3.6pt);
+\node[ovl] at (5.5,2.0) {};  \draw[black!70] (5.5,2.0) circle (3.6pt);
+\node[ovl] at (2.0,1.4) {};  \draw[black!70] (2.0,1.4) circle (3.6pt);
+\node[ovl] at (5.9,2.8) {};  \draw[black!70] (5.9,2.8) circle (3.6pt);
+\node[lb, anchor=north] at (3.3,-0.45) {(b) a instância do bloco 2};
+\node[own] at (0.35,-1.15) {};  \node[lb, anchor=west] at (0.55,-1.15) {bloco próprio};
+\node[ovl] at (2.75,-1.15) {};  \draw[black!70] (2.75,-1.15) circle (3.6pt);
+\node[lb, anchor=west] at (2.95,-1.15) {sobreposição};
+\node[faint] at (5.05,-1.15) {};  \node[lb, anchor=west] at (5.25,-1.15) {fora da instância};
+\end{scope}
+\end{tikzpicture}}\\
+Fonte: Autoral.
+\end{figure}
+
+
 \subsection{A sobreposição\label{sec:overlap}}
 
 Blocos disjuntos deixam não comparado todo par cujos dois pontos caiam em blocos distintos, e deixam também as instâncias sem referência comum: dois blocos só concordariam entre si através dos pontos que ambos por acaso contivessem, o que em uma partição disjunta é nenhum.\\
