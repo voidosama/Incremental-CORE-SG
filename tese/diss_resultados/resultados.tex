@@ -10,7 +10,9 @@ Este capítulo apresenta os resultados, organizados na ordem das questões de pe
 \section{Procedência das medições\label{sec:res-provenance}}
 % =====================================================================
 
-Todos os números apresentados neste capítulo provêm de medições do método como descrito no Capítulo \ref{cha:methods}, tomadas no agregado de quatro \ac{GPU}s descrito na Seção \ref{sec:hardware}, sobre até 5 sementes aleatórias, sem execuções falhas. A política de sementes é a da Seção \ref{sec:hardware}: múltiplas sementes onde o NN-Descent intervém, duas onde o \ac{k-NNG} é mantido exato e a execução é determinística.\\
+Todos os números apresentados neste capítulo provêm de medições do método como descrito no Capítulo \ref{cha:methods}, tomadas no agregado de quatro \ac{GPU}s descrito na Seção \ref{sec:hardware}, sem execuções falhas.\\
+
+A quantidade de sementes não é uniforme, e convém registrar quais tabelas repousam sobre quantas. As medições de qualidade das pontes, de conectividade, de varredura de $\mpts$, de concordância entre ambientes e de sensibilidade a parâmetros usam de 2 a 8 sementes, e as tabelas correspondentes indicam quantas. As medições de construção, que alimentam as Tabelas \ref{tab:memory}, \ref{tab:overlap}, \ref{tab:scale}, \ref{tab:scaling} e \ref{tab:refine}, foram tomadas sobre uma única semente: a residência por dispositivo é determinística dada a configuração, pela Equação \eqref{eq:devicecost}, e os tempos de relógio e as revocações ali reportados são, por isso, pontos únicos sem estimativa de dispersão. A Seção \ref{sec:disc-limits} retoma essa limitação.\\
 
 Duas medições precedem o conjunto atual e são reportadas sem reexecução, porque a grandeza que cada uma reporta não é afetada pelo trabalho de implementação realizado desde então: a Tabela \ref{tab:bridges}, que mantém a metade de vizinhança exata nos dois braços, e a Figura \ref{fig:components}, que conta componentes.\\
 
@@ -21,18 +23,18 @@ Duas medições precedem o conjunto atual e são reportadas sem reexecução, po
 Pontes só podem ser avaliadas onde o \ac{k-NNG} de fato se fragmenta. A Tabela \ref{tab:bridges} restringe-se aos conjuntos de dados em que isso ocorre, com o \ac{k-NNG} mantido exato nos dois lados da comparação, de modo que a estimativa de pontes seja a única variável. Como a referência é uma árvore geradora de custo $O(n^2 d)$, toda linha executa em $n = 4.000$; o conjunto \texttt{sift1m} aparece aqui, portanto, com dois componentes, ao passo que em seu $n$ completo o mesmo conjunto é conexo, conforme a Tabela \ref{tab:datasets}.\\
 
 \begin{table}[htb!]
-\caption{\label{tab:bridges} Pontes anti-hub contra a $\mathrm{MST}_{\kmax}$ exata, com $n = 4.000$ em toda linha. Ambos os lados compartilham um \ac{k-NNG} exato. A aceleração é a da construção das pontes contra a árvore geradora exata que elas substituem.}
+\caption{\label{tab:bridges} Pontes anti-hub contra a $\mathrm{MST}_{\kmax}$ exata, com $n = 4.000$ em toda linha. Ambos os lados compartilham um \ac{k-NNG} exato. A razão de peso e a diferença pontual são as de $\mpts = 1$, que é o pior caso da varredura em todos os conjuntos. A coluna ``dif.\ pontual'' é a maior diferença entre os perfis de peso ordenados, definida na Seção \ref{sec:metrics}, nas unidades de peso do conjunto. A aceleração é a da construção das pontes contra a árvore geradora exata que elas substituem. A coluna ``sem.'' é a quantidade de sementes; o desvio padrão da razão de peso é nulo em todas as linhas, e o da diferença pontual é nulo salvo em \texttt{manifold\_exact}, onde vale 0,0079.}
 \centering
 \footnotesize
-\begin{tabular}{@{}lrrrr@{}}
+\begin{tabular}{@{}lrrrrrr@{}}
 \toprule
-conjunto de dados & comp. & razão de peso & ARI & aceleração \\
+conjunto de dados & comp. & sem. & razão de peso & ARI & dif.\ pontual & aceleração \\
 \midrule
-\texttt{manifold\_c32}  & 32 & 1,00022 & 1,0000 & 18,2$\times$ \\
-\texttt{manifold\_c24}  & 24 & 1,00024 & 1,0000 & 36,0$\times$ \\
-\texttt{manifold\_exact}& 16 & 1,00000 & 1,0000 & 12,1$\times$ \\
-\texttt{manifold\_c8}   & 8  & 1,00001 & 1,0000 & 19,0$\times$ \\
-\texttt{sift1m}         & 2  & 1,00000 & 1,0000 & 10,5$\times$ \\
+\texttt{manifold\_c32}  & 32 & 2 & 1,00022 & 1,0000 & 0,4612 & 18,2$\times$ \\
+\texttt{manifold\_c24}  & 24 & 3 & 1,00024 & 1,0000 & 0,3748 & 36,0$\times$ \\
+\texttt{manifold\_exact}& 16 & 8 & 1,00000 & 1,0000 & 0,0199 & 12,1$\times$ \\
+\texttt{manifold\_c8}   & 8  & 2 & 1,00001 & 1,0000 & 0,0210 & 19,0$\times$ \\
+\texttt{sift1m}         & 2  & 5 & 1,00000 & 1,0000 & 0,0000 & 10,5$\times$ \\
 \bottomrule
 \end{tabular}\\
 Fonte: Autoral.
@@ -41,6 +43,8 @@ Fonte: Autoral.
 O pior caso observado em qualquer configuração é uma árvore geradora 0,024\% mais pesada que a ótima, com \ac{ARI} do DBSCAN* exatamente 1,0000, por 10,5 a 36 vezes menos trabalho. A razão de peso é uma afirmação sobre as alturas de fusão do dendrograma, de modo que o \ac{ARI} unitário é a consequência esperada: a estimativa produz árvores cuja sequência de fusões é indistinguível da exata nos limiares que importam para a extração de grupos. O mesmo efeito é observável fora da escala em que a referência exata é viável, e a medição correspondente está na Seção \ref{sec:res-sensitivity}: em $n = 50.000$, o \ac{k-NNG} de \texttt{manifold\_wide} se divide em 300 componentes e as pontes o reduzem a exatamente um, em todas as sementes. Essa contagem usa a grandeza corrigida descrita na Seção \ref{sec:metrics}; a versão inicial era registrada depois de as pontes serem incorporadas à rotulação, e por isso lia 1 por construção.\\
 
 A coluna de \ac{ARI} carrega uma ressalva, estabelecida durante a ablação da Seção \ref{sec:res-connectivity}. O limiar em que ambas as árvores são cortadas é o peso médio das arestas da árvore exata, que fica bem abaixo das alturas de fusão que uma ponte afeta, e os dois braços desta tabela compartilham todas as arestas do \ac{k-NNG} por construção. As duas rotulações concordam, portanto, sobre as arestas curtas, independentemente do que as pontes fizeram, e um valor de 1,0000 reflete em parte essa insensibilidade, além da qualidade da estimativa. A razão de peso e a diferença pontual entre os perfis comparam as árvores diretamente e não compartilham essa limitação.\\
+
+A diferença pontual acrescenta ao quadro algo que a razão de peso não mostra. Nos dois conjuntos em que o peso total da árvore exata foi registrado, ela pode ser lida contra a altura média de fusão: em \texttt{manifold\_c24} a maior diferença é de 0,3748 contra uma altura média de 0,8088, ou 46\%, e em \texttt{manifold\_exact} é de 0,0199 contra 1,2802, ou 1,6\%. Uma razão de peso de 1,00024 convive, portanto, com uma única fusão deslocada em quase metade da altura média. O agregado e o extremo respondem a perguntas diferentes, e é por isso que ambos são reportados: a hierarquia que a estimativa produz é indistinguível da exata em quase toda a sua extensão, e difere de forma visível em um ponto.\\
 
 A quantidade de anti-hubs selecionados influencia essa qualidade, mas de forma dependente do conjunto de dados. A Tabela \ref{tab:antihub-count} apresenta a varredura sobre o conjunto \texttt{manifold\_c24}, com o \ac{k-NNG} mantido exato. A melhora é monótona nesse caso.\\
 
@@ -136,7 +140,7 @@ conjunto de dados & $k=4$ & $k=8$ & $k=16$ & $k=24$ & $k=32$ & $k=48$ & $k=64$ \
 Fonte: Autoral.
 \end{table}
 
-Três observações decorrem desses dados.\\
+Três observações decorrem desses dados, e a primeira delas se desdobra na tabela de ablação que a acompanha.\\
 
 A primeira observação é que a árvore geradora corrige a fragmentação do grafo de vizinhança e contribui pouco além disso em dados conexos. Onde o \ac{k-NNG} já é um único componente, as pontes não têm o que ligar, do que se poderia concluir que elas não alteram nada. A conectividade sozinha não estabelece isso, e \citeonline{core-sg} já o apontam em termos teóricos: um \ac{k-NNG} conexo pode não conter uma $\mathrm{MST}_{\mpts}$, e os autores exibem um contraexemplo em $k = \mpts = 4$. Eles estabelecem a possibilidade, e esta seção mede a magnitude. Esse contraexemplo é a configuração em ferradura da Figura \ref{fig:coresg-edge-case}, descrita na Seção \ref{sec:coresg-why}: uma \ac{MST} sobre o grafo completo pode conter uma aresta curta ligando diretamente duas regiões que o \ac{k-NNG} só liga por um desvio longo em torno delas, de modo que os dois grafos são conexos e ainda assim induzem hierarquias diferentes. A Tabela \ref{tab:ablation} resolve a questão diretamente, extraindo uma árvore do \ac{k-NNG} sozinho, sem nenhuma ponte e sem reparo, e pontuando-a contra o \ac{CORE-SG} exato.\\
 
@@ -167,15 +171,15 @@ conjunto de dados & $n$ & $\le 8$ & 16 & 32 & razão de peso & excesso \\
 Fonte: Autoral.
 \end{table}
 
-Da tabela decorrem três constatações, e a primeira é que a forma forte da afirmação é falsa. A razão de peso excede 1 em nove das onze configurações, e como ela não pode cair abaixo de 1 para uma árvore geradora sobre um subgrafo, o \ac{k-NNG} sozinho força um desvio em algum lugar. Nas duas configurações restantes, ambas em \texttt{gist1m}, as duas árvores são idênticas aresta a aresta, e a razão é exatamente 1.\\
+Dentro dessa primeira observação, a tabela sustenta três leituras. A inicial é que a forma forte da afirmação é falsa. A razão de peso excede 1 em nove das onze configurações, e como ela não pode cair abaixo de 1 para uma árvore geradora sobre um subgrafo, o \ac{k-NNG} sozinho força um desvio em algum lugar. Nas duas configurações restantes, ambas em \texttt{gist1m}, as duas árvores são idênticas aresta a aresta, e a razão é exatamente 1.\\
 
-O efeito é também pequeno e confinado. Em $\mpts \leq 8$ as duas árvores são idênticas em nove das onze configurações, com uma única aresta divergente nas outras duas. Em $\mpts = 16$ elas permanecem idênticas em seis configurações e divergem em 1 a 4 arestas nas cinco restantes. As diferenças se concentram em $\mpts = \kmax$, onde alcançam de 0 a 22 arestas entre 25.000 e 100.000, e de 0,3 a 5,2 partes por milhão do peso total da árvore. Em \texttt{sift1m} com $n = 25.000$, a discrepância inteira é uma única aresta substituída, 18,85 mais pesada que a que ela substituiu, contra uma altura média de fusão de 281,8.\\
+A seguinte é que o efeito é pequeno e confinado. Em $\mpts \leq 8$ as duas árvores são idênticas em nove das onze configurações, com uma única aresta divergente nas outras duas. Em $\mpts = 16$ elas permanecem idênticas em seis configurações e divergem em 1 a 4 arestas nas cinco restantes. As diferenças se concentram em $\mpts = \kmax$, onde alcançam de 0 a 22 arestas entre 25.000 e 100.000, e de 0,3 a 5,2 partes por milhão do peso total da árvore. Em \texttt{sift1m} com $n = 25.000$, a discrepância inteira é uma única aresta substituída, 18,85 mais pesada que a que ela substituiu, contra uma altura média de fusão de 281,8.\\
 
 A definição prevê essa concentração em valores grandes de $\mpts$. Em $\mpts$ pequeno as \textit{core distances} de \eqref{eq:mrd} são pequenas, de modo que a \textit{mutual reachability distance} é aproximadamente a distância métrica, as arestas mais baratas são as mais curtas, e essas são exatamente as que um \ac{k-NNG} armazena. Em $\mpts = \kmax$ as \textit{core distances} estão em seu maior valor, e todo ponto a distância menor que $\coredist^{\kmax}(x)$ de $x$ é um parceiro de mesmo peso; a fronteira dessa bola é o $\kmax$-ésimo vizinho armazenado, de modo que os parceiros empatados naquela distância não couberam na lista. O conjunto \texttt{glove100} exibe o efeito com maior intensidade e é também o de maior dimensionalidade intrínseca entre os avaliados, onde tais empates são mais numerosos. A explicação permanece uma conjectura: as arestas divergentes não foram inspecionadas individualmente.\\
 
-A consequência prática é a mesma que motivou o projeto. As pontes rendem em uma faixa estreita próxima a $\mpts = \kmax$, e os agrupamentos planos cortados das duas árvores foram idênticos em todos os limiares aplicados. Derivar a rotulação de componentes custa de 0,08 a 3,5\,ms nos conjuntos avaliados, contra 5,3 a 222\,ms de trabalho de \textit{hubness} e de pontes, um fator de 48 a 136, de modo que testar a conectividade primeiro e pular o cálculo das pontes onde o grafo já é conexo custa pouco e abre mão de pouco.\\
+A última é que a consequência prática é a mesma que motivou o projeto. As pontes rendem em uma faixa estreita próxima a $\mpts = \kmax$, e os agrupamentos planos cortados das duas árvores foram idênticos em todos os limiares aplicados. Derivar a rotulação de componentes custa de 0,08 a 3,5\,ms nos conjuntos avaliados, contra 5,3 a 222\,ms de trabalho de \textit{hubness} e de pontes, um fator de 48 a 136, de modo que testar a conectividade primeiro e pular o cálculo das pontes onde o grafo já é conexo custa pouco e abre mão de pouco.\\
 
-Onde o grafo de fato se fragmenta, o quadro é diferente, e é esse o controle de que a ablação precisa. Em \texttt{manifold\_mid} o \ac{k-NNG} sozinho deixa 150 componentes em todos os tamanhos testados, de modo que a estrutura extraída dele é uma floresta com 149 arestas a menos do que uma árvore geradora exigiria, e sua razão de peso, de 0,92 a 0,97, fica abaixo de 1 apenas porque é uma soma sobre menos arestas. Ali as pontes deixam de ser uma correção marginal e passam a ser o mecanismo que produz a árvore.\\
+Onde o grafo de fato se fragmenta, o quadro é diferente, e é esse o controle de que a ablação precisa. Em \texttt{manifold\_mid} o \ac{k-NNG} \textit{exato} sozinho deixa 150 componentes em todos os tamanhos testados, contra os 132 que a Tabela \ref{tab:connectivity} reporta para o grafo aproximado no mesmo $\kmax$; aqui o grafo aproximado é o mais conexo dos dois, porque um vizinho substituído por outro mais distante pode atravessar a fronteira entre componentes que o grafo exato respeita, de modo que a estrutura extraída dele é uma floresta com 149 arestas a menos do que uma árvore geradora exigiria, e sua razão de peso, de 0,92 a 0,97, fica abaixo de 1 apenas porque é uma soma sobre menos arestas. Ali as pontes deixam de ser uma correção marginal e passam a ser o mecanismo que produz a árvore.\\
 
 A segunda é que a dimensionalidade ambiente não prediz o limiar, como mostra o par de conjuntos destacado na legenda da Figura \ref{fig:components}. O que distingue os dois casos é a presença de componentes genuinamente separados por densidade, cada um contendo muitos pontos, propriedade que a família sintética possui por construção e que os dados reais, nessas escalas, majoritariamente não possuem.\\
 
@@ -482,7 +486,7 @@ A Figura \ref{fig:speedup} apresenta as acelerações. A fase de instâncias cai
 
 A diferença entre os dois números decorre da parcela da construção que os dispositivos executam. Em $m = 64$ sobre uma \ac{GPU}, a fase de instâncias é 0,290 do total; sobre quatro, é 0,097, porque essa fase encolhe enquanto as fases do hospedeiro não. Em $n = 5 \times 10^7$ a fase de instâncias é de 123,4\,s em 1090,2\,s, ou 0,113, e o passo de reparo é de 863,0\,s, ou 0,792.\\
 
-Pela lei de Amdahl \cite{amdahl}, uma fração paralela de 0,097 limita a aceleração alcançável a 1,11 por mais dispositivos que se acrescente. A eficiência da fase paralela alcança 3,80 de 4,00 possíveis, de modo que o limite à escalabilidade está no tamanho relativo da fase sequencial. Essa fase é o passo de reparo, e a seção seguinte o examina.\\
+A lei de Amdahl \cite{amdahl} se aplica à fração medida na configuração de referência, que é a de um dispositivo. Com $f = 0{,}290$ ali, o limite é $1/(1-f) = 1{,}41$ para qualquer quantidade de dispositivos, e a curva correspondente prevê 1,278 em quatro, contra os 1,277 medidos. A fração de 0,097 é a que resta depois de quatro dispositivos, e o que ela limita é o ganho adicional a partir dali, de 1,11. A eficiência da fase paralela alcança 3,80 de 4,00 possíveis, de modo que o limite à escalabilidade está no tamanho relativo da fase sequencial. Essa fase é o passo de reparo, e a seção seguinte o examina.\\
 
 % =====================================================================
 \section{O passo de reparo\label{sec:res-repair}}
@@ -523,7 +527,7 @@ Nenhuma das quatro estratégias encurta o passo a revocação constante. A sobre
 \section{Comparação com uma construção em GPU: cuML\label{sec:res-cuml}}
 % =====================================================================
 
-A biblioteca cuML \cite{cuml} implementa o \ac{HDBSCAN*} em \ac{GPU}. A Tabela \ref{tab:cuml} compara uma construção contra um ajuste da cuML no mesmo dispositivo e sobre os mesmos dados.\\
+A biblioteca cuML \cite{cuml} implementa o \ac{HDBSCAN*} em \ac{GPU}. A Tabela \ref{tab:cuml} compara uma construção contra um ajuste da cuML no mesmo dispositivo e sobre os mesmos dados, com a biblioteca em sua configuração padrão, isto é, com \texttt{min\_cluster\_size} e \texttt{min\_samples} iguais a $\mpts$ e sem particionamento. Os números abaixo medem, portanto, o caminho não particionado da biblioteca, conforme a Seção \ref{sec:rel-distributed}; um ajuste da cuML inclui também a árvore condensada e a seleção de grupos, ao passo que a coluna deste trabalho cobre apenas a construção.\\
 
 \begin{table}[htb!]
 \caption{\label{tab:cuml} \texttt{sift1m}, um dispositivo, $\kmax = 32$ para este trabalho e $\mpts = 10$ para a cuML.}
@@ -603,7 +607,7 @@ A Figura \ref{fig:extract} dispõe esses pontos em escala logarítmica. O custo 
 
 Dentro de um mesmo grafo, o custo cai conforme $\mpts$ sobe. Em $n = 10^6$ ele é de 1,060\,s em $\mpts = 2$ e de 0,791\,s em $\mpts = 32$, uma queda de 25\%. A consulta mais cara é, portanto, a de menor $\mpts$.\\
 
-A varredura inteira custa de 1,08 a 1,72 vezes a construção que produziu o grafo, na mesma execução e no mesmo dispositivo. Contra a construção de uma árvore sobre o grafo completo para cada valor, medida no único tamanho em que essa referência é acessível, a varredura é de 161 a 167 vezes mais barata: 0,82\,s contra 134\,s em $n = 2 \times 10^4$, onde a referência é extrapolada a partir de 3 das 32 árvores exatas.\\
+A varredura inteira custa de 1,08 a 1,72 vezes a construção que produziu o grafo, na mesma execução e no mesmo dispositivo. Contra a construção de uma árvore sobre o grafo completo para cada valor, medida no único tamanho em que essa referência é acessível, a varredura é de 161 a 167 vezes mais barata: 0,82\,s contra 134\,s em $n = 2 \times 10^4$, onde a referência é extrapolada a partir de 3 das 32 árvores exatas. A faixa de 71 a 303 vezes da Tabela \ref{tab:mpts} é outra medição: ela cobre quatro conjuntos de dados em seus próprios tamanhos, com a referência calculada por inteiro, e por isso varia mais.\\
 
 Posto ao lado da Tabela \ref{tab:cuml}, um ajuste da cuML em $n = 10^6$ custa 180,03\,s e uma extração de um \ac{CORE-SG} já construído, nesse mesmo tamanho, custa 0,853\,s. Uma varredura de 32 valores são 32 ajustes para a cuML e uma construção somada a 27,60\,s aqui.\\
 
@@ -613,7 +617,7 @@ Essa seção fornece também uma verificação das pontes em escalas que a refer
 \section{O ganho da varredura de $\mpts$ sobrevive à decomposição\label{sec:res-mpts}}
 % =====================================================================
 
-O \ac{CORE-SG} existe para servir toda a faixa $\mpts \in [1, \kmax]$ a partir de um único grafo. A Tabela \ref{tab:mpts} verifica que essa propriedade é preservada quando o grafo é construído incrementalmente em vez de de uma só vez.\\
+O \ac{CORE-SG} existe para servir toda a faixa $\mpts \in [1, \kmax]$ a partir de um único grafo. A Tabela \ref{tab:mpts} verifica que essa propriedade é preservada quando o grafo é construído por instâncias independentes em vez de uma só vez.\\
 
 \begin{table}[htb!]
 \caption{\label{tab:mpts} Extração de todas as \ac{MST}s para $\mpts \in [1, \kmax]$ a partir de um único \ac{CORE-SG}, contra o cálculo de cada uma a partir do grafo completo.}

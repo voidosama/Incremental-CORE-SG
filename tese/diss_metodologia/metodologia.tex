@@ -172,11 +172,18 @@ O custo por ponto que uma instância impõe ao dispositivo é
 \label{eq:devicecost}
 c = 4\,\mathrm{stride} + 8k + s,
 \end{equation}
-em que $\mathrm{stride}$ é o comprimento do vetor após alinhamento, $k$ é o tamanho da vizinhança e $s$ é o estado de amostragem do NN-Descent. Uma instância ocupa, portanto, $c\,m_i$ bytes, com $m_i$ dado pela Equação \eqref{eq:instancesize}, e é a maior instância que decide se uma configuração cabe em um dado acelerador.\\
+em que $\mathrm{stride}$ é o comprimento do vetor após alinhamento, $k$ é o tamanho da vizinhança e $s$ é o estado de amostragem do NN-Descent, que vale 176 bytes na implementação medida. Uma instância ocupa, portanto, $c\,m_i$ bytes, com $m_i$ dado pela Equação \eqref{eq:instancesize}, e é a maior instância que decide se uma configuração cabe em um dado acelerador.\\
+
+O hospedeiro obedece a um custo distinto, e é ele que fixa o limite de escala do método. Os vetores, as listas globais de vizinhança e o índice de vizinhança reversa residem na memória principal durante toda a construção, nenhum deles dividido entre instâncias, de modo que
+\begin{equation}
+\label{eq:hostcost}
+C_h = \Theta\bigl(n\,(d + k)\bigr),
+\end{equation}
+sem dependência de $m$. A constante não é derivada aqui, e sim medida: nas construções da Tabela \ref{tab:scale}, com $d = 32$ e $\kmax = 32$, a memória do hospedeiro cresce a aproximadamente 1000 bytes por ponto, o que coloca $5 \times 10^7$ pontos em 50,5\,GB. A decomposição atua sobre \eqref{eq:devicecost} e não sobre \eqref{eq:hostcost}: elevar $m$ reduz a residência por dispositivo e deixa a do hospedeiro intacta. O maior conjunto construível é, por isso, determinado pela memória principal da máquina, e um hospedeiro de 128\,GB comporta cerca de $1{,}3 \times 10^8$ pontos nessa configuração.\\
 
 Duas convenções de unidade são usadas ao longo do texto, e os limites derivados desta equação dependem de qual delas se aplica. As capacidades de dispositivo seguem a rotulação do fabricante, em múltiplos binários, de modo que um acelerador de 8\,GB oferece $2^{33} = 8{,}59 \times 10^9$ bytes. As quantidades medidas e reportadas, como as residências da Seção \ref{sec:res-memory}, estão em múltiplos decimais de $10^6$ e $10^9$ bytes.\\
 
-Dada a memória disponível em um dispositivo, essa expressão torna calculáveis os pares $(m, \omega)$ que cabem nele. A Seção \ref{sec:res-memory} reporta a grandeza diretamente medida.\\
+Dada a memória disponível em um dispositivo, a Equação \eqref{eq:devicecost} torna calculáveis os pares $(m, \omega)$ que cabem nele. A Seção \ref{sec:res-memory} reporta a grandeza diretamente medida.\\
 
 \subsection{Mesclagem\label{sec:merge}}
 
@@ -200,7 +207,7 @@ O passo de reparo é a fase dominante de uma construção em escala, e por isso 
 
 \subsection{O estimador de borda\label{sec:score}}
 
-Como estabelecido na Seção \ref{sec:adopted-bridges}, a árvore geradora só precisa fornecer arestas que atravessem componentes separados por densidade, e tal ponte parte da borda de um componente. Define-se, para um vértice $v$ do \ac{k-NNG} com conjunto de vizinhos $\mathrm{NN}(v)$,
+Como estabelecido na Seção \ref{sec:adopted-bridges}, a estimativa se encarrega das arestas que atravessam componentes separados por densidade, e tal ponte parte da borda de um componente; o resíduo que a ferradura produz é aceito como erro e medido na Seção \ref{sec:res-connectivity}. Define-se, para um vértice $v$ do \ac{k-NNG} com conjunto de vizinhos $\mathrm{NN}(v)$,
 \begin{equation}
 \label{eq:rd}
 \mathrm{rd}(v) = \left| \{\, u : v \in \mathrm{NN}(u) \,\} \right|,
@@ -285,19 +292,19 @@ A Figura \ref{fig:antihub} ilustra os dois mecanismos. O painel (a) mostra a ass
 Fonte: Autoral.
 \end{figure}
 
-A forma de \eqref{eq:score} tem dois detalhes. A média divide por $|\mathrm{NN}(v)|$ em lugar de por $k$, porque um vértice recém-inserido pode ter uma lista mais curta que $k$ antes do refinamento, e dividir por $k$ nesse caso não produziria uma média aritmética. E o limite superior da pontuação não é $k$: conforme os graus dos vizinhos caem, a pontuação cresce sem limite superior, ao passo que seu ponto neutro é 1.\\
+A forma de \eqref{eq:score} tem dois detalhes. A média divide por $|\mathrm{NN}(v)|$ em lugar de por $k$, porque um vértice pode ter uma lista mais curta que $k$ antes do refinamento, e dividir por $k$ nesse caso não produziria uma média aritmética. E o limite superior da pontuação não é $k$: conforme os graus dos vizinhos caem, a pontuação cresce sem limite superior, ao passo que seu ponto neutro é 1.\\
 
 \subsection{A seleção\label{sec:selection}}
 
 A estimativa consiste em selecionar os $\lceil d \ln |E| \rceil$ vértices de menor pontuação e calcular uma \ac{MST} exata sobre esse conjunto no espaço de \textit{mutual reachability}. Suas arestas tornam-se as pontes, armazenadas com sua distância métrica original, de modo que o repeso para uma consulta em um dado $\mpts$ as trate de forma idêntica às arestas do \ac{k-NNG}.\\
 
-O tamanho do conjunto selecionado depende de $d$ e de $|E|$, independentemente de $n$. As pontes precisam cobrir os lugares que as vizinhanças não alcançam, e isso é uma propriedade de quão ricamente o grafo está conectado: $n$ pontos com $\kmax = 64$ deixam menos lacunas que os mesmos $n$ pontos com $\kmax = 8$, e a contagem de arestas carrega essa informação. O logaritmo impede que o termo cresça com o grafo em qualquer sentido prático, já que $|E|$ é ele próprio $O(n\kmax)$ e seu logaritmo se desloca em 0,69 a cada duplicação. O cálculo das pontes é, portanto, $O(m^2 d)$ para $m$ anti-hubs selecionados, com $m \ll n$, e nenhuma árvore geradora precisa ser mantida conforme os pontos chegam.\\
+O tamanho do conjunto selecionado depende de $d$ e de $|E|$, independentemente de $n$. As pontes precisam cobrir os lugares que as vizinhanças não alcançam, e isso é uma propriedade de quão ricamente o grafo está conectado: $n$ pontos com $\kmax = 64$ deixam menos lacunas que os mesmos $n$ pontos com $\kmax = 8$, e a contagem de arestas carrega essa informação. O logaritmo impede que o termo cresça com o grafo em qualquer sentido prático, já que $|E|$ é ele próprio $O(n\kmax)$ e seu logaritmo se desloca em 0,69 a cada duplicação. Denotando por $a = \lceil \alpha\, d \ln |E| \rceil$ a quantidade de anti-hubs selecionados, com $\alpha$ o multiplicador da Seção \ref{sec:intrinsic}, o cálculo das pontes custa $O(a^2 d)$, com $a \ll n$, e nenhuma árvore geradora global precisa ser materializada.\\
 
 \subsection{Dimensionalidade ambiente e dimensionalidade intrínseca\label{sec:intrinsic}}
 
 O termo $d$ em $\lceil d \ln |E| \rceil$ é, na formulação acima, a dimensionalidade ambiente, isto é, o número de coordenadas que cada ponto carrega. Isso degenera em alta dimensionalidade: quando $d$ é da ordem de centenas ou milhares, o produto $d \ln |E|$ pode exceder o próprio $n$, e a seleção passa a conter todos os pontos, momento em que a estimativa se torna a \ac{MST} exata que ela existe para substituir.\\
 
-A alternativa implementada substitui $d$ pela \ac{ID} estimada por máxima verossimilhança a partir dos raios de vizinhança já armazenados \cite{levina_bickel}, agregada entre os pontos pela média harmônica \cite{mackay_ghahramani}, que é o agrupamento não enviesado desse estimador e o único que tolera estimativas locais explodidas. O estimador é gratuito no sentido de que consome apenas as distâncias que o \ac{k-NNG} já contém, ao custo de $O(n k)$. Um limitador adicional, expresso sobre o custo em operações de par em lugar da contagem de anti-hubs, limita o custo quando o estimador de dimensionalidade não é confiável. A Seção \ref{sec:res-sensitivity} apresenta a comparação medida entre as duas regras.\\
+A alternativa implementada substitui $d$ pela \ac{ID} estimada por máxima verossimilhança a partir dos raios de vizinhança já armazenados \cite{levina_bickel}, agregada entre os pontos pela média harmônica \cite{mackay_ghahramani}, que é o agrupamento não enviesado desse estimador e tolera as estimativas locais explodidas que a média aritmética não suporta. O estimador é gratuito no sentido de que consome apenas as distâncias que o \ac{k-NNG} já contém, ao custo de $O(n k)$. O multiplicador $\alpha$ da fórmula vale 1 em todos os experimentos, salvo na Seção \ref{sec:res-dimension}, onde ele é varrido explicitamente. Um limitador adicional, expresso sobre o custo em operações de par em lugar da contagem de anti-hubs, limita o custo quando o estimador de dimensionalidade não é confiável. A Seção \ref{sec:res-sensitivity} apresenta a comparação medida entre as duas regras.\\
 
 \subsection{Cota por componente\label{sec:quota}}
 
@@ -368,13 +375,13 @@ A seleção é uma estimativa, de modo que as pontes que ela produz podem ainda 
 Fonte: Autoral.
 \end{figure}
 
-Ambos os mecanismos precisam saber a que componente pertence cada vértice, de modo que uma rotulação de componentes é calculada uma vez por atualização. Ela é uma passagem de união-busca sobre os arranjos de adjacência do \ac{k-NNG}, que percorre todos os vértices; adicionar as arestas de ponte à rotulação em seguida custa uma união adicional por ponte. A rotulação é global, mas não substitui a pontuação anti-hub: saber quais vértices pertencem a um componente não diz de qual deles uma ponte deve partir, e um componente pode conter milhões de vértices. Ligar componentes diretamente exigiria uma busca entre todos os pares de dois deles, e a pontuação reduz cada componente ao conjunto pequeno de vértices de borda sobre o qual a árvore geradora é calculada.\\
+Ambos os mecanismos precisam saber a que componente pertence cada vértice, de modo que uma rotulação de componentes é calculada uma vez por construção. Ela é uma passagem de união-busca sobre os arranjos de adjacência do \ac{k-NNG}, que percorre todos os vértices; adicionar as arestas de ponte à rotulação em seguida custa uma união adicional por ponte. A rotulação é global, mas não substitui a pontuação anti-hub: saber quais vértices pertencem a um componente não diz de qual deles uma ponte deve partir, e um componente pode conter milhões de vértices. Ligar componentes diretamente exigiria uma busca entre todos os pares de dois deles, e a pontuação reduz cada componente ao conjunto pequeno de vértices de borda sobre o qual a árvore geradora é calculada.\\
 
 \subsection{O índice de hubness como observador\label{sec:hubindex}}
 
-A implementação tem duas propriedades relevantes. O índice de \textit{hubness} se acopla ao \ac{k-NNG} como um observador, de modo que toda aresta direcionada inserida ou removida atualiza um grau reverso em $O(1)$ e marca os vértices afetados; uma atualização repontua apenas a região afetada, em vez de todos os $n$ vértices.\\
+A implementação tem duas propriedades relevantes. O índice de \textit{hubness} se acopla ao \ac{k-NNG} como um observador, de modo que toda aresta direcionada inserida ou removida atualiza um grau reverso em $O(1)$ e marca os vértices afetados; a repontuação alcança apenas a região afetada, em vez de todos os $n$ vértices. Na construção sobre conjunto fixo essa propriedade não é exercida, e ela é registrada porque o caminho de extensão da Seção \ref{sec:fut-streams} depende dela.\\
 
-Além disso, o índice mantém as próprias vizinhanças reversas, além dos graus reversos, o que torna exata a propagação da pontuação após uma atualização, porque $\mathrm{score}(v)$ depende de $\mathrm{rd}(u)$ para $u \in \mathrm{NN}(v)$, de modo que os vértices que precisam ser repontuados quando o grau reverso de um vértice $u$ muda são aqueles que têm $u$ como vizinho, isto é, os vizinhos reversos de $u$. Essas mesmas listas são o que torna o grafo navegável para busca em feixe, propriedade que a construção não utiliza mas da qual o caminho de extensão da Seção \ref{sec:fut-streams} depende. O custo dessa escolha é um inteiro por aresta direcionada, e ela pode ser desativada, momento em que a propagação recai para uma aproximação sobre arestas diretas e a busca segue apenas arestas diretas.\\
+Além disso, o índice mantém as próprias vizinhanças reversas, além dos graus reversos, o que torna exata a propagação da pontuação após uma alteração do grafo, porque $\mathrm{score}(v)$ depende de $\mathrm{rd}(u)$ para $u \in \mathrm{NN}(v)$, de modo que os vértices que precisam ser repontuados quando o grau reverso de um vértice $u$ muda são aqueles que têm $u$ como vizinho, isto é, os vizinhos reversos de $u$. Essas mesmas listas são o que torna o grafo navegável para busca em feixe, propriedade que a construção não utiliza mas da qual o caminho de extensão da Seção \ref{sec:fut-streams} depende. O custo dessa escolha é um inteiro por aresta direcionada, e ela pode ser desativada, momento em que a propagação recai para uma aproximação sobre arestas diretas e a busca segue apenas arestas diretas.\\
 
 % =====================================================================
 \section{O algoritmo\label{sec:algorithm}}
@@ -399,8 +406,8 @@ A extração da $\mathrm{MST}_{\mpts}$ para um valor específico do parâmetro �
 \STATE $G \leftarrow$ listas vazias de $\kmax$ melhores sobre $X$
 \FOR{$i \leftarrow 1$ \TO $m$}
     \COMMENT{mesclagem; independente da ordem}
-    \FORALL{$v \in B_i$ e $(u, w) \in H_i[v]$}
-        \STATE ofereça $(u, w)$ a $G[v]$, que retém os $\kmax$ menores
+    \FORALL{$v \in V_i$ e $(u, w) \in H_i[v]$}
+        \STATE ofereça $w$ a $G[v]$ e a $G[u]$, cada lista retendo os $\kmax$ menores
     \ENDFOR
 \ENDFOR
 \IF{$m > 1$}
@@ -447,7 +454,7 @@ Duas decisões no Algoritmo \ref{alg:knn} poderiam ser tomadas de outra forma.\\
 
 A primeira é a condição da linha que precede o passo de reparo, que define o caso base. Em $m = 1$ não há partição, nenhum par deixa de ser comparado, e o resultado da descida é o grafo final; executar um reparo ali equivaleria a mais rodadas de NN-Descent sobre o mesmo grafo, que é uma escolha distinta da adotada aqui.\\
 
-A segunda é que a mesclagem percorre apenas $v \in B_i$, deixando de fora $v \in V_i$. As vizinhanças descobertas para os pontos de sobreposição são usadas durante a descida, pois é através delas que os pares que cruzam fronteiras são comparados; elas não são, porém, oferecidas à mesclagem por uma instância que não possui esses pontos. Cada vértice é oferecido à lista global pela instância que o possui, o que mantém o custo da mesclagem em $O(n\kmax)$ independentemente de $\omega$.\\
+A segunda é que a mesclagem percorre $V_i$ inteiro, e não apenas $B_i$, e que cada aresta encontrada é oferecida às listas dos seus dois extremos. Um vértice sorteado para a amostra de sobreposição de outras instâncias recebe, portanto, contribuições de todas elas, e é esse confronto que a Seção \ref{sec:merge} descreve. O custo da mesclagem é, por consequência, $O((1+\omega)\,n\kmax)$ e não $O(n\kmax)$: a sobreposição é paga duas vezes, uma na descida e outra aqui. Percorrer apenas $B_i$ descartaria vizinhanças já calculadas; essa alternativa não foi medida.\\
 
 Sobre o Algoritmo \ref{alg:bridges}, a ordem de seleção da linha correspondente é um critério total e determinístico, por pontuação, depois grau reverso, depois identificador. Sem o desempate explícito, duas execuções sobre o mesmo grafo selecionariam conjuntos de anti-hubs distintos sempre que houvesse empates de pontuação, que são frequentes em componentes de densidade uniforme, e o método deixaria de ser reprodutível.\\
 
@@ -475,7 +482,7 @@ A qualidade é medida contra computações exatas e nunca contra rótulos de cla
 
 Duas referências exatas são usadas, uma por pergunta. A estimativa de pontes é pontuada contra o \ac{CORE-SG} exato, ou seja, um \ac{k-NNG} exato por força bruta somado a uma $\mathrm{MST}_{\kmax}$ exata, já que a pergunta é se a estimativa corresponde à árvore geradora que ela substitui. A revocação da vizinhança é pontuada contra um \ac{k-NNG} exato por força bruta sobre os mesmos pontos.\\
 
-Acima de $n = 2 \times 10^5$ a referência exaustiva, que custa $O(n^2 d)$, torna-se inviável e é substituída por uma estimativa amostrada: 2.000 vértices de consulta sorteados uniformemente, cada um pontuado exatamente contra todos os pontos, ao custo de $O(q n d)$ para $q$ consultas. Em revocação próxima de 0,98, o erro padrão da média amostral fica abaixo de 0,003, o que é uma ordem de grandeza menor que as diferenças que o Capítulo \ref{cha:results} discute.\\
+Acima de $n = 2 \times 10^5$ a referência exaustiva, que custa $O(n^2 d)$, torna-se inviável e é substituída por uma estimativa amostrada: 2.000 vértices de consulta sorteados uniformemente, cada um pontuado exatamente contra todos os pontos, ao custo de $O(Q n d)$ para $Q$ consultas, símbolo distinto da cota $q$ do Algoritmo \ref{alg:bridges}. Em revocação próxima de 0,98, o erro padrão da média amostral fica abaixo de 0,003, o que é uma ordem de grandeza menor que as diferenças que o Capítulo \ref{cha:results} discute.\\
 
 Uma comparação usa a construção de instância única como referência em lugar das anteriores. O efeito sob teste ali é o custo do particionamento: o que muda no resultado quando um conjunto é cortado em $m$ blocos em vez de descido como um só. Um \ac{CORE-SG} exato não isola isso, porque difere de qualquer um dos dois braços da comparação em dois aspectos simultaneamente: a partição e o fato de a metade de vizinhança ser exata. Uma construção de instância única difere apenas na partição.\\
 
@@ -493,7 +500,7 @@ A maior diferença pontual entre os perfis de peso ordenados é o máximo, sobre
 
 O número de arestas divergentes é a quantidade de arestas de uma das árvores que não estão presentes na outra, sobre as $n-1$ arestas de uma árvore geradora. Um valor zero estabelece que as duas árvores são idênticas, o que nenhuma métrica agregada consegue estabelecer.\\
 
-O \ac{ARI} do DBSCAN* \cite{ari} é o índice Rand ajustado entre os agrupamentos planos cortados de ambas as árvores em um limiar comum. O índice Rand mede a fração de pares de objetos sobre os quais duas partições concordam, e sua forma ajustada corrige o valor esperado sob atribuição aleatória, de modo que 1 indica partições idênticas e 0 indica concordância equivalente ao acaso. A correção por acaso torna o índice interpretável quando as partições comparadas têm números distintos de grupos, situação em que a forma não corrigida cresce com a quantidade de grupos; a mesma correção se aplica às medidas de concordância derivadas da teoria da informação \cite{ami}, cujo uso aqui seria redundante, já que as partições comparadas provêm do mesmo corte sobre árvores quase idênticas.\\
+O \ac{ARI} do DBSCAN* \cite{ari} é o índice Rand ajustado entre os agrupamentos planos cortados de ambas as árvores em um limiar comum. O agrupamento assim obtido é o do DBSCAN*, com corte horizontal único, e não o do \ac{FOSC} descrito na Seção \ref{sec:fosc}, cuja seleção por estabilidade corta a hierarquia em níveis distintos; a Seção \ref{sec:res-bridges} registra o que essa escolha custa em sensibilidade. O índice Rand mede a fração de pares de objetos sobre os quais duas partições concordam, e sua forma ajustada corrige o valor esperado sob atribuição aleatória, de modo que 1 indica partições idênticas e 0 indica concordância equivalente ao acaso. A correção por acaso torna o índice interpretável quando as partições comparadas têm números distintos de grupos, situação em que a forma não corrigida cresce com a quantidade de grupos; a mesma correção se aplica às medidas de concordância derivadas da teoria da informação \cite{ami}, cujo uso aqui seria redundante, já que as partições comparadas provêm do mesmo corte sobre árvores quase idênticas.\\
 
 As duas últimas respondem a perguntas diferentes e ambas são necessárias: a contagem de arestas divergentes estabelece se houve diferença, e a razão de peso estabelece se essa diferença custou alguma coisa. O \ac{ARI} é a mais fraca das quatro sempre que as duas árvores são extraídas de grafos que compartilham um subgrafo comum, pela razão exposta na Seção \ref{sec:res-bridges}.\\
 
@@ -501,11 +508,11 @@ Três grandezas adicionais precisam de definição.\\
 
 A contagem de componentes do \ac{k-NNG} antes do reparo é o número de componentes conexos em que o grafo de vizinhança se divide por conta própria, sem nenhuma ponte adicionada e sem reparo aplicado. Ela enuncia quanto trabalho as pontes têm a fazer, e um valor de 1 significa que elas não têm nenhum. Essa grandeza precisou ser corrigida durante a pesquisa: em sua primeira forma, ela era coletada depois de as arestas de ponte serem incorporadas à rotulação de componentes, e por isso lia 1 em toda execução, houvessem as pontes funcionado ou não. A forma reportada neste trabalho é coletada antes de qualquer ponte ser adicionada, e por isso pode assumir valores maiores que 1, como ocorre na Seção \ref{sec:res-quota}.\\
 
-O tempo de relógio decomposto por fase separa uma atualização em busca de semeadura, descida das instâncias, mesclagem, refinamento restrito, atualização de \textit{hubness}, árvore geradora das pontes e passagem de conectividade, de modo que a porção paralela possa ser separada do restante sequencial. É dessa decomposição que se extrai a fração paralela $f$ usada na análise de escalabilidade.\\
+O tempo de relógio decomposto por fase separa uma atualização em busca de semeadura, descida das instâncias, mesclagem, refinamento restrito, atualização de \textit{hubness}, árvore geradora das pontes e passagem de conectividade, de modo que a porção paralela possa ser separada do restante sequencial. É dessa decomposição que se extrai a fração paralela $f$ usada na análise de escalabilidade, sempre lida na configuração de um único dispositivo.\\
 
 A maior instância residente é a memória de dispositivo que a maior instância de uma construção exigiu. É a grandeza que decide se uma configuração cabe em um dado acelerador, e portanto a que responde diretamente ao problema da Seção \ref{sec:problem-scale}. Ela é reportada em bytes efetivamente alocados, de modo que a Equação \eqref{eq:devicecost} possa ser confrontada com a medição.\\
 
-A fração paralela $f$ é o tempo da fase de instâncias dividido pelo tempo total da construção. É a parcela do trabalho que executa nos aceleradores e que, portanto, se beneficia de acrescentá-los; pela lei de Amdahl \cite{amdahl}, ela limita superiormente a aceleração alcançável por qualquer quantidade de dispositivos. Reportá-la ao lado do tempo total distingue uma construção que não acelerou por estar mal dimensionada de uma que não acelerou por ser dominada por fases sequenciais.\\
+A fração paralela $f$ é o tempo da fase de instâncias dividido pelo tempo total da construção, medido na configuração de referência de um único dispositivo. É a parcela do trabalho que executa nos aceleradores e que, portanto, se beneficia de acrescentá-los; pela lei de Amdahl \cite{amdahl}, o valor lido em um dispositivo limita a aceleração a $1/(1-f)$ para qualquer quantidade deles. O mesmo quociente medido sobre $p$ dispositivos é menor, porque a fase paralela já encolheu, e limita apenas o ganho adicional a partir de $p$. Reportá-la ao lado do tempo total distingue uma construção que não acelerou por estar mal dimensionada de uma que não acelerou por ser dominada por fases sequenciais.\\
 
 Uma métrica é deliberadamente omitida: a sobreposição de arestas entre duas \ac{MST}s do mesmo grafo. Todas as \ac{MST}s de um grafo compartilham o mesmo multiconjunto de pesos, e para qualquer limiar os componentes do conjunto de arestas abaixo dele dependem do grafo e não de qual \ac{MST} foi extraída, de modo que duas \ac{MST}s diferentes induzem hierarquias de ligação simples muito semelhantes. Medido neste sistema, a sobreposição cai de 0,99 para 0,19 conforme $\mpts$ sobe de 1 para 32 enquanto o \ac{ARI} permanece exatamente 1,0000, porque aumentar $\mpts$ achata os pesos de \textit{mutual reachability} em platôs de valores empatados e qualquer critério de desempate produz uma árvore diferente e igualmente ótima.\\
 
@@ -516,6 +523,8 @@ A contagem de arestas divergentes definida acima não incorre nessa objeção. E
 A Tabela \ref{tab:datasets} lista as três famílias utilizadas, mais uma família escala, empregada apenas na Seção \ref{sec:res-scale} e na sondagem de capacidade de instância única. Os conjuntos de escala são sintéticos, gerados em $d = 32$ com dimensionalidade intrínseca 8, 200 grupos e separação fixa, em tamanhos de $10^7$ a $5 \times 10^7$ pontos; eles existem porque nenhum conjunto público ao qual tivemos acesso alcança essas magnitudes, e a afirmação principal do trabalho trata do regime em que a construção não decomposta deixa de caber no dispositivo.\\
 
 Os conjuntos real-paper reproduzem as receitas de preparação do trabalho original do \ac{CORE-SG} \cite{core-sg} para fins de comparabilidade, usando FMA \cite{fma} e 20 Newsgroups \cite{newsgroups}. Os conjuntos real-scale exercitam escala, alta dimensionalidade e uma métrica não euclidiana: SIFT1M e GIST1M \cite{sift_gist}, e GloVe \cite{glove} sob distância do cosseno. Os conjuntos manifold são sintéticos, gerados em baixa dimensionalidade e rotacionados para uma alta por um mapa ortonormal aleatório, o que preserva exatamente toda distância entre pares, de modo que a estrutura de componentes e sua separação permanecem intactas enquanto a dimensionalidade ambiente sobe e a dimensionalidade intrínseca é conhecida por construção.\\
+
+Os tamanhos da Tabela \ref{tab:datasets} são os dos arquivos preparados. Onde o Capítulo \ref{cha:results} reporta um $n$ menor, ele foi obtido tomando o prefixo do arquivo já embaralhado, e não uma reamostragem por experimento, de modo que dois experimentos no mesmo $n$ operam sobre os mesmos pontos.\\
 
 A família \textit{manifold} existe por causa de uma constatação reportada na Seção \ref{sec:res-connectivity}: nenhum conjunto de dados real examinado produz um \ac{k-NNG} fragmentado, de modo que nenhum deles é capaz de exercitar as pontes.\\
 
@@ -573,8 +582,10 @@ Nenhum método publicado constrói, distribuído entre múltiplos aceleradores, 
 
 As medições foram tomadas em um agregado de 4 \ac{GPU}s RTX 2080 SUPER (arquitetura sm\_75, 8\,GB de memória por dispositivo, \ac{CUDA} 12.9), salvo indicação em contrário; um subconjunto foi tomado em uma única RTX 4070 Ti SUPER e está rotulado como tal. As figuras de qualidade, ou seja, contagens de componentes, revocação, \ac{ARI} e razões entre tempos medidos na mesma máquina, são independentes do hardware; as figuras absolutas de tempo de relógio não são, e nunca são agregadas entre máquinas.\\
 
-Todo experimento usa múltiplas sementes aleatórias, porque o NN-Descent é aleatorizado e seu cache de vizinhos reversos é deliberadamente tolerante a corridas entre threads. Experimentos que mantêm o \ac{k-NNG} exato são determinísticos e usam 2 sementes, o que foi verificado observando um desvio padrão de exatamente zero em 5 sementes.\\
+Os experimentos de qualidade usam múltiplas sementes aleatórias, porque o NN-Descent é aleatorizado e seu cache de vizinhos reversos é deliberadamente tolerante a corridas entre threads; a quantidade vai de 2 a 8 conforme o experimento, e cada tabela a declara. Experimentos que mantêm o \ac{k-NNG} exato são determinísticos, o que foi verificado observando um desvio padrão de exatamente zero em 5 sementes. Os experimentos de construção foram tomados sobre uma única semente, conforme a Seção \ref{sec:res-provenance}.\\
 
 \subsection{Infraestrutura\label{sec:infrastructure}}
 
 A Universidade Federal de São Carlos, campus São Carlos, por meio do laboratório MIDAS (Mineração de Dados e Aplicações), proporciona o espaço físico e os equipamentos necessários ao desenvolvimento do projeto, incluindo o agregado de aceleradores usado nas medições. A instituição, em parceria com repositórios de artigos e trabalhos acadêmicos, permite o acesso às referências bibliográficas necessárias à pesquisa, além daquelas acessadas pela internet.\\
+
+A implementação descrita neste capítulo, os roteiros que produzem cada tabela e figura deste texto e os arquivos de medição de onde seus números são lidos estão disponíveis em \url{https://github.com/voidosama/Incremental-CORE-SG}.\\
