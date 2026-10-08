@@ -128,7 +128,7 @@ O \ac{k-NNG} é localizável. Sua construção depende exclusivamente das vizinh
 
 \begin{figure}[htb!]
 \centering
-\caption{\label{fig:knng-increment-reaction} Comportamento do incremento no \ac{k-NNG}, arestas coincidentes foram representadas como uma só.}
+\caption{\label{fig:knng-increment-reaction} A localidade do \ac{k-NNG}. Um ponto acrescentado a um grafo existente altera as vizinhanças dos vértices próximos a ele e deixa intactas as dos distantes, o que delimita a região de que cada lista de vizinhança depende. Arestas coincidentes foram representadas como uma só.}
 \includegraphics[width=\textwidth]{cap_materias_e_metodos/knng_increment_reaction.eps}
 Fonte: Autoral.
 \end{figure}
@@ -194,23 +194,7 @@ O resultado foi negativo. A manutenção incremental perde para uma recomputaç�
 
 \subsection{Sumarização localizada do grafo\label{sec:discarded-summarization}}
 
-A segunda linha proposta na qualificação era a sumarização do \ac{CORE-SG}, como resposta ao crescimento indefinido da estrutura. A sumarização de grafos consiste em descobrir uma representação condensada do grafo, reduzindo a quantidade de vértices e arestas e substituindo-os por supervértices que representam regiões e superarestas que as conectam, minimizando a perda de propriedades relevantes \cite{graph-summarization-survey}. A Figura \ref{fig:summarization-techniques} resume as três técnicas principais identificadas pela literatura: agregação de vértices ou arestas, seleção de subconjuntos ou dispersão da estrutura, e transformação para uma representação de menor dimensionalidade.\\
-
-\begin{figure}[htb!]
-\centering
-\caption{\label{fig:summarization-techniques} Principais técnicas de sumarização de grafos.}
-\includegraphics[width=\textwidth]{cap_referencial_teorico/summarization_techniques.eps}
-Fonte: Autoral para (a) e (b); e \cite{network-transformation} para (c).
-\end{figure}
-
-A proposta original distinguia-se da literatura por não sumarizar o grafo inteiro. Em vez disso, ao atingir um limiar de memória, os grupos mais densamente relevantes seriam identificados por \ac{FOSC} \cite{fosc} e sumarizados localmente, sob a hipótese de que regiões densas comportam maior compressão com menor perda de informação, pois quanto mais densa uma aglomeração, menos pontos são necessários para representá-la. Dentro de cada grupo, a fusão de pares de vértices seria decidida por um procedimento \ac{MCMC} no estilo Metropolis-Hastings \cite{mcmc}, inspirado no \ac{MoSSo} \cite{mosso}, com uma função custo baseada na variação da entropia de Shannon da distribuição de graus do subgrafo \cite{entropy}. A Figura \ref{fig:knng-summarization} e a Figura \ref{fig:summarization-effect} ilustram o efeito estrutural pretendido sobre o \ac{k-NNG} e sobre a \ac{MST}, respectivamente, e a Figura \ref{fig:summarization-flowchart} descreve o fluxo do procedimento.\\
-
-\begin{figure}[htb!]
-\centering
-\caption{\label{fig:knng-summarization} Alteração da $k$-vizinhança de um vértice frente à sumarização.}
-\includegraphics[width=\textwidth]{cap_referencial_teorico/knng_summarization.eps}
-Fonte: Autoral.
-\end{figure}
+A segunda linha proposta na qualificação era a sumarização do \ac{CORE-SG}, como resposta ao crescimento indefinido da estrutura. Sumarizar um grafo consiste em substituir vértices e arestas por supervértices que representam regiões e superarestas que as conectam, minimizando a perda de propriedades relevantes \cite{graph-summarization-survey}. A literatura agrupa as técnicas em três famílias: agregação de vértices ou arestas, seleção de subconjuntos ou dispersão da estrutura, e transformação para uma representação de menor dimensionalidade \cite{network-transformation}. A proposta distinguia-se da literatura por não sumarizar o grafo inteiro: ao atingir um limiar de memória, os grupos mais densos seriam identificados por \ac{FOSC} \cite{fosc} e sumarizados localmente, sob a hipótese de que regiões densas comportam maior compressão com menor perda, e a fusão de pares de vértices dentro de cada grupo seria decidida por um procedimento \ac{MCMC} no estilo Metropolis-Hastings \cite{mcmc}, inspirado no \ac{MoSSo} \cite{mosso}, com uma função custo baseada na variação da entropia de Shannon da distribuição de graus do subgrafo \cite{entropy}. A Figura \ref{fig:summarization-effect} ilustra o efeito estrutural pretendido sobre o \ac{k-NNG} e sobre a \ac{MST}.\\
 
 \begin{figure}[htb!]
 \centering
@@ -219,16 +203,9 @@ Fonte: Autoral.
 Fonte: Autoral.
 \end{figure}
 
-\begin{figure}[htb!]
-\centering
-\caption{\label{fig:summarization-flowchart} Fluxograma da sumarização proposta na qualificação.}
-\includegraphics[width=\textwidth]{cap_materias_e_metodos/summarization_flowchart.eps}
-Fonte: Autoral.
-\end{figure}
-
 Quatro razões motivaram a substituição dessa linha.\\
 
-A primeira, e a mais importante, é que o problema que a sumarização resolvia foi resolvido de outra forma. A motivação declarada era conter o consumo de memória. A decomposição em instâncias autocontidas, descrita na Seção \ref{sec:adopted}, limita a memória por dispositivo ao tamanho da instância, que por sua vez é determinado por um parâmetro sob controle do usuário. O consumo por dispositivo passa a ser invariante em relação a $n$ sem que nenhum ponto precise ser descartado ou fundido. Uma técnica com perda deixa de ser necessária quando existe uma sem perda que atinge o mesmo objetivo.\\
+A primeira, e a mais importante, é que o problema que a sumarização resolvia foi resolvido de outra forma. A motivação declarada era conter o consumo de memória. A decomposição em instâncias autocontidas, descrita na Seção \ref{sec:adopted}, limita a memória por dispositivo ao tamanho da instância, que por sua vez é determinado por um parâmetro sob controle do usuário. O consumo por dispositivo passa a ser invariante em relação a $n$ sem que nenhum ponto precise ser descartado ou fundido, de modo que a técnica com perda deixou de ser necessária.\\
 
 A segunda é que a sumarização introduz uma segunda fonte de erro que não é separável da primeira. O objetivo da pesquisa é avaliar quanto a decomposição degrada o resultado em relação a uma referência exata. Se o grafo também for sumarizado, o erro medido passa a ser a soma de duas aproximações independentes, e nenhum experimento consegue atribuir a cada uma sua parcela. Manter o método no nível dos pontos individuais preserva a possibilidade de comparação direta com o objeto exato.\\
 
