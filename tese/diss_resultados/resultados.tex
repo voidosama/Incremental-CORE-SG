@@ -4,7 +4,7 @@
 
 \chapter{Resultados\label{cha:results}}
 
-Este capítulo apresenta os resultados, organizados na ordem das questões de pesquisa do Capítulo \ref{cha:intro}. As Seções \ref{sec:res-bridges} e \ref{sec:res-connectivity} tratam da QP3, isto é, da substituição da árvore geradora por uma estimativa. A Seção \ref{sec:res-memory} responde à QP1 sobre a memória por dispositivo, e a Seção \ref{sec:res-scale} verifica que a resposta se sustenta em escala. A Seção \ref{sec:res-overlap} responde à QP2 sobre o custo do particionamento em qualidade e sobre o parâmetro que o controla, e a Seção \ref{sec:res-premerge} separa a parcela dessa qualidade que cada uma das duas fases produz. As Seções \ref{sec:res-scaling} a \ref{sec:res-extract} respondem à QP4 sobre o custo em tempo e sobre o que a decomposição oferece em contrapartida. A Seção \ref{sec:res-parity} verifica que nenhuma afirmação depende do ambiente de execução, e a Seção \ref{sec:res-sensitivity} caracteriza a sensibilidade aos parâmetros livres.
+Este capítulo apresenta os resultados, organizados na ordem das questões de pesquisa do Capítulo \ref{cha:intro}. As Seções \ref{sec:res-bridges} e \ref{sec:res-connectivity} tratam da QP3, isto é, da substituição da árvore geradora por uma estimativa. A Seção \ref{sec:res-memory} responde à QP1 sobre a memória por dispositivo, e a Seção \ref{sec:res-scale} verifica que a resposta se sustenta em escala. A Seção \ref{sec:res-overlap} responde à QP2 sobre o custo do particionamento em qualidade e sobre o parâmetro que o controla, e as Seções \ref{sec:res-premerge} e \ref{sec:res-cpuonly} separam, respectivamente, a parcela da qualidade e a parcela do tempo que cada uma das duas fases responde. As Seções \ref{sec:res-scaling} a \ref{sec:res-extract} respondem à QP4 sobre o custo em tempo e sobre o que a decomposição oferece em contrapartida. A Seção \ref{sec:res-parity} verifica que nenhuma afirmação depende do ambiente de execução, e a Seção \ref{sec:res-sensitivity} caracteriza a sensibilidade aos parâmetros livres.
 
 % =====================================================================
 \section{Procedência das medições\label{sec:res-provenance}}
@@ -30,9 +30,9 @@ Pontes só podem ser avaliadas onde o \ac{k-NNG} de fato se fragmenta. A Tabela 
 \toprule
 conjunto de dados & comp. & razão de peso & ARI corte & ARI FOSC & dif.\ pontual & aceleração \\
 \midrule
-\texttt{manifold\_c32}  & 32 & 1,00022 & 1,0000 & 0,9990 & 0,4612 & 18,2$\times$ \\
-\texttt{manifold\_c24}  & 24 & 1,00024 & 1,0000 & 0,9995 & 0,3748 & 36,0$\times$ \\
-\texttt{manifold\_exact}& 16 & 1,00000 & 1,0000 & 0,9997 & 0,0199 & 12,1$\times$ \\
+\texttt{manifold\_c32}  & 32 & 1,00022 & 1,0000 & 0,9993 & 0,4612 & 18,2$\times$ \\
+\texttt{manifold\_c24}  & 24 & 1,00024 & 1,0000 & 0,9997 & 0,3748 & 36,0$\times$ \\
+\texttt{manifold\_exact}& 16 & 1,00000 & 1,0000 & 1,0000 & 0,0199 & 12,1$\times$ \\
 \texttt{manifold\_c8}   & 8  & 1,00001 & 1,0000 & 1,0000 & 0,0210 & 19,0$\times$ \\
 \texttt{sift1m}         & 2  & 1,00000 & 1,0000 & 0,9992 & 0,0000 & 10,5$\times$ \\
 \bottomrule
@@ -44,7 +44,7 @@ O pior caso observado em qualquer configuração é uma árvore geradora 0,024\%
 
 A coluna de \ac{ARI} carrega uma ressalva, estabelecida durante a ablação da Seção \ref{sec:res-connectivity}. O limiar em que ambas as árvores são cortadas é o peso médio das arestas da árvore exata, que fica bem abaixo das alturas de fusão que uma ponte afeta, e os dois braços desta tabela compartilham todas as arestas do \ac{k-NNG} por construção. As duas rotulações concordam, portanto, sobre as arestas curtas, independentemente do que as pontes fizeram, e um valor de 1,0000 reflete em parte essa insensibilidade, além da qualidade da estimativa. A razão de peso e a diferença pontual entre os perfis comparam as árvores diretamente e não compartilham essa limitação.\\
 
-O \ac{ARI} sob \ac{FOSC} fica entre 0,9975 e 1,0000 nas 45 comparações, com médias por conjunto de 0,9990 a 1,0000 e igualdade exata em toda semente apenas em \texttt{manifold\_c8}. A diferença em relação à coluna do corte único é pequena em magnitude e informativa em natureza: a quantidade de grupos que as duas hierarquias produzem coincide em todas as comparações, de modo que as pontes recuperam a estrutura de componentes sem exceção, e o que difere é a atribuição de um punhado de pontos. O corte único no peso médio não exibe essa diferença, pelo motivo exposto no parágrafo anterior, e é por isso que ambas as colunas são reportadas.\\
+O \ac{ARI} sob \ac{FOSC} fica entre 0,9975 e 1,0000 nas 45 comparações, com médias por conjunto de 0,9992 a 1,0000 e igualdade exata em toda semente em \texttt{manifold\_c8} e \texttt{manifold\_exact}. A mesma medição repetida em uma \ac{GPU} distinta concorda até a quarta casa, salvo em \texttt{manifold\_exact}, onde a seleção de estabilidade é sensível ao desempate. A diferença em relação à coluna do corte único é pequena em magnitude e informativa em natureza: a quantidade de grupos que as duas hierarquias produzem coincide em todas as comparações, de modo que as pontes recuperam a estrutura de componentes sem exceção, e o que difere é a atribuição de um punhado de pontos. O corte único no peso médio não exibe essa diferença, pelo motivo exposto no parágrafo anterior, e é por isso que ambas as colunas são reportadas.\\
 
 A diferença pontual acrescenta ao quadro algo que a razão de peso não mostra. Nos dois conjuntos em que o peso total da árvore exata foi registrado, ela pode ser lida contra a altura média de fusão: em \texttt{manifold\_c24} a maior diferença é de 0,3748 contra uma altura média de 0,8088, ou 46\%, e em \texttt{manifold\_exact} é de 0,0199 contra 1,2802, ou 1,6\%. Uma razão de peso de 1,00024 convive, portanto, com uma única fusão deslocada em quase metade da altura média. O agregado e o extremo respondem a perguntas diferentes, e é por isso que ambos são reportados: a hierarquia que a estimativa produz é indistinguível da exata em quase toda a sua extensão, e difere de forma visível em um ponto.\\
 
@@ -220,7 +220,36 @@ A residência segue a Equação \eqref{eq:instancesize}: 472,0\,MB em uma instâ
 
 A revocação não cai monotonicamente. Ela sobe de $m = 1$ para $m = 2$ nos dois conjuntos, em 0,0137 em \texttt{sift1m} e 0,0611 em \texttt{glove100}, atinge máximo em $m = 2$ no primeiro e em $m = 4$ no segundo, e declina a partir daí. Em $m = 1$ nenhum passo de reparo é executado. Em \texttt{glove100} toda contagem de 2 a 64 permanece acima do valor de $m = 1$, em 0,0702 no máximo e 0,0101 em $m = 64$; em \texttt{sift1m} as contagens de 2 a 16 permanecem acima, e $m = 32$ e $m = 64$ ficam 0,0008 e 0,0032 abaixo.\\
 
-Esse comportamento contraria a expectativa. Particionar um conjunto de dados para construir um grafo de vizinhança deveria, pelo argumento da Seção \ref{sec:problem-partition-cost}, apenas piorar o resultado. O passo de reparo, porém, operando sobre um grafo mesclado que já possui vizinhanças razoáveis, encontra arestas que uma descida única partindo de um grafo aleatório não encontra dentro do mesmo orçamento de rodadas. A decomposição, portanto, não troca apenas qualidade por memória: em contagens baixas de instâncias ela melhora as duas.\\
+Esse comportamento contraria a expectativa. Particionar um conjunto de dados para construir um grafo de vizinhança deveria, pelo argumento da Seção \ref{sec:problem-partition-cost}, apenas piorar o resultado. O passo de reparo, porém, operando sobre um grafo mesclado que já possui vizinhanças razoáveis, encontra arestas que uma descida única partindo de um grafo aleatório não encontra dentro do mesmo orçamento de rodadas.\\
+
+A objeção imediata é que a comparação mede orçamento de iterações e não decomposição: em $m = 1$ nenhum reparo é executado, de modo que o braço particionado recebe rodadas adicionais de NN-Descent que o outro não recebe. A Tabela \ref{tab:budget} afasta essa leitura ao conceder a $m = 1$ o orçamento que lhe faltava.\\
+
+\begin{table}[htb!]
+\caption{\label{tab:budget} Revocação de uma construção de instância única sob orçamento crescente de rodadas, contra as construções particionadas que ela deve igualar. $n = 5 \times 10^5$, $\kmax = 32$, $\omega = 0{,}05$. Uma construção com $m > 1$ executa 10 rodadas dentro da instância mais 5 de reparo; as linhas de $m = 1$ variam o total de rodadas de 10 a 25.}
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{\texttt{sift1m}} & \multicolumn{2}{c}{\texttt{glove100}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+configuração & revocação & total & revocação & total \\
+\midrule
+$m = 1$, 10 rodadas & 0,9673 & 5,72\,s & 0,7163 & 5,85\,s \\
+$m = 1$, 12 rodadas & 0,9678 & 5,79\,s & 0,7327 & 6,12\,s \\
+$m = 1$, 15 rodadas & 0,9669 & 5,77\,s & 0,7440 & 6,35\,s \\
+$m = 1$, 20 rodadas & 0,9677 & 5,78\,s & 0,7455 & 6,50\,s \\
+$m = 1$, 25 rodadas & 0,9673 & 5,81\,s & 0,7471 & 6,54\,s \\
+\midrule
+$m = 2$, 10 + 5       & 0,9753 & 9,18\,s & 0,7565 & 8,10\,s \\
+$m = 8$, 10 + 5       & 0,9668 & 9,10\,s & 0,7288 & 8,32\,s \\
+\bottomrule
+\end{tabular}\\
+Fonte: Autoral.
+\end{table}
+
+Em $m = 2$ a vantagem sobrevive ao orçamento igualado. A construção particionada alcança 0,9753 em \texttt{sift1m} e 0,7565 em \texttt{glove100}, acima de qualquer linha de instância única, inclusive a de 25 rodadas. Em \texttt{sift1m} a descida única satura: de 10 para 25 rodadas a revocação oscila dentro de 0,001 e não sobe, de modo que nenhum orçamento a leva aos 0,9753 do braço particionado. Em \texttt{glove100} ela ainda cresce com as rodadas, de 0,7163 para 0,7471, e mesmo assim não alcança o braço particionado.\\
+
+Em $m = 8$ a vantagem desaparece. A construção particionada alcança 0,9668 e 0,7288, valores que a descida única iguala ou supera com rodadas suficientes. O ganho da decomposição é, portanto, real e restrito a contagens baixas de instâncias, onde cada instância ainda vê uma fração substancial do conjunto. Ele também não é gratuito em tempo: o braço particionado custa de 1,4 a 1,6 vezes o tempo da descida única nessas configurações.\\
 
 O custo em tempo de relógio da mesma faixa é de 5,862\,s em $m = 1$ contra 10,033\,s em $m = 64$ em \texttt{sift1m}, um fator de 1,71. Em uma única \ac{GPU} a mesma comparação é de 5,757\,s contra 15,774\,s, um fator de 2,74; a Seção \ref{sec:res-overlap} separa as duas.\\
 
@@ -328,7 +357,7 @@ Uma configuração intermediária foi medida em \texttt{sift1m}. Em $\omega = 0{
 As seções anteriores reportam a revocação do grafo concluído. Esta separa as duas fases que a produzem: a Tabela \ref{tab:premerge} mede o grafo mesclado com o passo de reparo desativado, isto é, exatamente o que a fase de instâncias entrega aos dispositivos.\\
 
 \begin{table}[htb!]
-\caption{\label{tab:premerge} Revocação do grafo mesclado antes de qualquer rodada de reparo, $n = 5 \times 10^5$, $\kmax = 32$. A linha $m = 1$ não particiona e não executa reparo em nenhuma configuração, de modo que ali o valor é o do grafo final. Uma \ac{GPU} RTX 4070 Ti SUPER; a revocação é independente do dispositivo.}
+\caption{\label{tab:premerge} Revocação do grafo mesclado antes de qualquer rodada de reparo, $n = 5 \times 10^5$, $\kmax = 32$. A linha $m = 1$ não particiona e não executa reparo em nenhuma configuração, de modo que ali o valor é o do grafo final. Medida no agregado de quatro \ac{GPU}s da Seção \ref{sec:hardware}. A mesma grade repetida em uma RTX 4070 Ti SUPER difere em 0,0018 na média e em 0,0073 no pior caso, o que confirma que a grandeza é independente do dispositivo.}
 \centering
 \footnotesize
 \begin{tabular}{@{}llrrrrrrr@{}}
@@ -336,22 +365,22 @@ As seções anteriores reportam a revocação do grafo concluído. Esta separa a
 conjunto & $\omega$ & $m=1$ & $m=2$ & $m=4$ & $m=8$ & $m=16$ & $m=32$ & $m=64$ \\
 \midrule
 \texttt{sift1m}
-  & 0,05 & 0,9673 & 0,5134 & 0,2677 & 0,1353 & 0,0675 & 0,0333 & 0,0170 \\
-  & 0,50 & 0,9672 & 0,6786 & 0,4270 & 0,2433 & 0,1310 & 0,0674 & 0,0344 \\
-  & 1,00 & 0,9672 & 0,7997 & 0,5822 & 0,3726 & 0,2151 & 0,1149 & 0,0601 \\
+  & 0,05 & 0,9688 & 0,5148 & 0,2663 & 0,1359 & 0,0677 & 0,0336 & 0,0177 \\
+  & 0,50 & 0,9687 & 0,6806 & 0,4282 & 0,2455 & 0,1321 & 0,0691 & 0,0356 \\
+  & 1,00 & 0,9677 & 0,8027 & 0,5841 & 0,3731 & 0,2131 & 0,1150 & 0,0605 \\
 \midrule
 \texttt{glove100}
-  & 0,05 & 0,7137 & 0,4106 & 0,2241 & 0,1219 & 0,0640 & 0,0332 & 0,0172 \\
-  & 0,50 & 0,7131 & 0,5314 & 0,3508 & 0,2104 & 0,1188 & 0,0649 & 0,0341 \\
-  & 1,00 & 0,7137 & 0,6258 & 0,4754 & 0,3164 & 0,1903 & 0,1071 & 0,0580 \\
+  & 0,05 & 0,7170 & 0,4046 & 0,2237 & 0,1180 & 0,0625 & 0,0335 & 0,0169 \\
+  & 0,50 & 0,7179 & 0,5351 & 0,3581 & 0,2133 & 0,1203 & 0,0654 & 0,0339 \\
+  & 1,00 & 0,7161 & 0,6258 & 0,4789 & 0,3189 & 0,1929 & 0,1080 & 0,0583 \\
 \bottomrule
 \end{tabular}\\
 Fonte: Autoral.
 \end{table}
 
-A revocação antes do reparo acompanha a fração do conjunto que cada instância vê. Com blocos tomados de uma permutação aleatória, um vértice é comparado, dentro de sua instância, contra $(1+\omega)/m$ do conjunto, e é essa fração que a tabela reproduz: em $\omega = 0{,}05$ a previsão é de 0,131 em $m = 8$ contra 0,1353 medidos, e de 0,0164 em $m = 64$ contra 0,0170. Em $\omega = 1{,}00$ o medido excede a previsão por um fator de até dois, porque os pontos de sobreposição são sorteados independentemente por instância e a mesclagem recebe cada aresta pelos seus dois extremos, de modo que a cobertura efetiva é maior que a fração nominal.\\
+A revocação antes do reparo acompanha a fração do conjunto que cada instância vê. Com blocos tomados de uma permutação aleatória, um vértice é comparado, dentro de sua instância, contra $(1+\omega)/m$ do conjunto, e é essa fração que a tabela reproduz: em $\omega = 0{,}05$ a previsão é de 0,131 em $m = 8$ contra 0,1359 medidos, e de 0,0164 em $m = 64$ contra 0,0177. Em $\omega = 1{,}00$ o medido excede a previsão por um fator de até dois, porque os pontos de sobreposição são sorteados independentemente por instância e a mesclagem recebe cada aresta pelos seus dois extremos, de modo que a cobertura efetiva é maior que a fração nominal.\\
 
-A consequência é que, em contagens altas de instâncias, a maior parte da qualidade final do grafo é produzida pelo passo de reparo e não pela fase de instâncias. Em \texttt{sift1m} com $m = 8$ e $\omega = 0{,}05$, os dispositivos entregam 0,1353 e o grafo concluído alcança 0,9672, de modo que 86\% do resultado vem da fase que executa no hospedeiro. Em $m = 32$ com o mesmo $\omega$ a fração sobe para 96\%, e em $m = 64$ com $\omega = 1{,}00$ ela é de 94\%. Elevar a sobreposição desloca essa divisão na direção dos dispositivos, que é o efeito que a Seção \ref{sec:res-overlap} mede pelo lado do tempo: em $m = 64$, passar de $\omega = 0{,}05$ para $\omega = 1{,}00$ multiplica por 3,5 a revocação que a fase de instâncias entrega.\\
+A consequência é que, em contagens altas de instâncias, a maior parte da qualidade final do grafo é produzida pelo passo de reparo e não pela fase de instâncias. Em \texttt{sift1m} com $m = 8$ e $\omega = 0{,}05$, os dispositivos entregam 0,1359 e o grafo concluído alcança 0,9665, de modo que 86\% do resultado vem da fase que executa no hospedeiro. Em $m = 32$ com o mesmo $\omega$ a fração sobe para 96\%, e em $m = 64$ com $\omega = 1{,}00$ ela é de 94\%. Elevar a sobreposição desloca essa divisão na direção dos dispositivos, que é o efeito que a Seção \ref{sec:res-overlap} mede pelo lado do tempo: em $m = 64$, passar de $\omega = 0{,}05$ para $\omega = 1{,}00$ multiplica por 3,4 a revocação que a fase de instâncias entrega.\\
 
 Essa leitura delimita a contribuição dos aceleradores neste método. Eles produzem um grafo inicial cuja qualidade isolada é baixa em contagens altas de instâncias, e o que justifica a decomposição não é a qualidade desse grafo, e sim que ele é produzido sob uma residência por dispositivo que não cresce com $n$, conforme a Seção \ref{sec:res-memory}. A Seção \ref{sec:disc-category} retoma o ponto.\\
 
@@ -458,6 +487,34 @@ Três verificações acompanham essas construções. Nenhuma instância foi exec
 Uma construção de instância única sobre os mesmos dados exige 560 bytes por ponto no dispositivo, o que coloca $5 \times 10^7$ pontos em 28,0\,GB e $10^7$ em 5,6\,GB. A construção de instância única em $10^7$ pontos foi executada para confirmar a aritmética: ela colocou 5,600\,GB em um acelerador, não reportou nenhuma instância sem memória e concluiu em 119,2\,s. Os tamanhos maiores excedem o dispositivo de 8\,GB.\\
 
 Um grafo sobre $5 \times 10^7$ pontos não é construído mais rápido pela decomposição: ele passa a ser construível, no mesmo hardware em que antes não era. Os dois limites envolvidos são de naturezas distintas. O da construção de instância única é uma capacidade física, e nenhuma escolha de parâmetro o move. O da construção decomposta é a residência de uma instância, que a Equação \eqref{eq:devicecost} torna calculável e que o usuário baixa elevando $m$. A Seção \ref{sec:disc-category} retoma a distinção.\\
+
+% =====================================================================
+\section{O que os aceleradores compram\label{sec:res-cpuonly}}
+% =====================================================================
+
+A Seção \ref{sec:res-premerge} mostra que a fase de instâncias entrega uma fração pequena da revocação final em contagens altas de instâncias. Resta a pergunta complementar, que é quanto do tempo ela economiza. A Tabela \ref{tab:cpuonly} responde pela via direta: a mesma construção, sobre os mesmos dados e com a mesma contagem de instâncias, com os dispositivos desligados. O ambiente de \ac{CPU} da Seção \ref{sec:implementation} executa então todas as instâncias no hospedeiro, e a única diferença entre as duas colunas é onde a fase de instâncias correu.\\
+
+\begin{table}[htb!]
+\caption{\label{tab:cpuonly} A mesma construção com e sem os aceleradores, no mesmo agregado, $\omega = 0{,}05$. A coluna \textit{instâncias} é a fase que muda de lugar; \textit{reparo} e \textit{mesclagem} executam no hospedeiro nos dois casos. A coluna \ac{GPU} é a média de 3 sementes e a de \ac{CPU} uma execução.}
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+ & & \multicolumn{2}{c}{total} & \multicolumn{2}{c}{fase de instâncias} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+$n$ & $m$ & \ac{GPU} & \ac{CPU} & \ac{GPU} & \ac{CPU} \\
+\midrule
+$5\times10^5$ & 8   & 9,1\,s     & 19,0\,s    & 1,11\,s   & 9,58\,s \\
+$1\times10^7$ & 20  & 184,4\,s   & 358,3\,s   & 24,3\,s   & 193,3\,s \\
+$5\times10^7$ & 100 & 1003,5\,s  & 1985,2\,s  & 122,6\,s  & 1029,7\,s \\
+\bottomrule
+\end{tabular}\\
+Fonte: Autoral.
+\end{table}
+
+Os quatro dispositivos aceleram a fase que executam por um fator entre 7,9 e 8,6, e a construção inteira por um fator entre 1,94 e 2,08, nos três tamanhos. O passo de reparo é de 852,4\,s sem dispositivos contra 781,3\,s com eles em $5 \times 10^7$ pontos, isto é, praticamente o mesmo trabalho, como seria de esperar de uma fase que executa no hospedeiro em ambos os casos. A revocação coincide até a terceira casa, de modo que a troca é apenas de tempo.\\
+
+Esse par de números delimita o papel dos aceleradores neste método com mais precisão do que a aceleração contra a quantidade de dispositivos da Seção \ref{sec:res-scaling}. Eles reduzem à oitava parte o trecho da construção que lhes cabe, e reduzem à metade a construção inteira, porque a metade restante é o passo de reparo, que não lhes cabe. Um conjunto de $5 \times 10^7$ pontos que leva 33 minutos sem aceleradores leva 17 com eles; nenhuma das duas construções seria possível em um único dispositivo, e é essa a propriedade que a Seção \ref{sec:res-scale} mede.\\
 
 % =====================================================================
 \section{Escalabilidade em múltiplos aceleradores\label{sec:res-scaling}}
@@ -581,6 +638,27 @@ Fonte: Autoral.
 \end{table}
 
 Ao dobrar $n$, o custo deste trabalho cresce por um fator de 1,87 e o da cuML por 4,13. Em um conjunto de dimensionalidade 32, a cuML esgota um dispositivo de 8\,GB em $8 \times 10^6$ pontos, ponto em que a residência por dispositivo deste trabalho, em $5 \times 10^7$ pontos da mesma dimensionalidade, é de 293,9\,MB.\\
+
+A configuração acima é a padrão da biblioteca, e a Tabela \ref{tab:cuml-part} reporta o que muda quando os dois parâmetros descritos na Seção \ref{sec:rel-distributed} são ativados.\\
+
+\begin{table}[htb!]
+\caption{\label{tab:cuml-part} cuML sobre \texttt{sift1m} no agregado de referência, $\mpts = 10$, 3 sementes. A coluna $C$ é \texttt{knn\_n\_clusters}, com \texttt{knn\_overlap\_factor} em 2; $C = 1$ é o caminho não particionado. Todas as linhas usam \texttt{build\_algo} igual a \texttt{nn\_descent}.}
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+$n$ & $C = 1$ & $C = 4$ & $C = 8$ & $C = 16$ \\
+\midrule
+$5\times10^5$ & 17,2\,s & 33,5\,s & 34,7\,s & 35,6\,s \\
+$1\times10^6$ & 34,0\,s & 67,6\,s & 69,7\,s & 69,7\,s \\
+\bottomrule
+\end{tabular}\\
+Fonte: Autoral.
+\end{table}
+
+Duas leituras decorrem da tabela, e uma terceira questão fica em aberto. A primeira é que o caminho de NN-Descent da biblioteca é substancialmente mais rápido que o de força bruta usado na Tabela \ref{tab:cuml}: 17,2\,s contra 43,6\,s em $5 \times 10^5$ pontos. A vantagem em tempo deste trabalho sobre a cuML, reportada ali como um fator entre 4,53 e 10,01, mede a biblioteca em sua configuração padrão e não se sustenta nessa magnitude contra o caminho de NN-Descent. A segunda é que ativar o particionamento aproximadamente dobra o tempo da cuML e o mantém estável a partir de $C = 4$, o que é coerente com a troca que a própria documentação anuncia, de memória por exatidão e por tempo.\\
+
+A questão em aberto é a de capacidade, que é a que interessa à afirmação central deste trabalho. A instrumentação de memória de dispositivo não produziu leitura nessas execuções, e os tamanhos acima de $10^6$ pontos não foram medidos porque o conjunto \texttt{sift1m} não os contém. O tamanho em que a cuML particionada deixa de caber em um dispositivo de 8\,GB permanece, portanto, não medido, e a comparação de capacidade da Tabela \ref{tab:cuml} continua valendo apenas para o caminho não particionado. A Seção \ref{sec:disc-limits} registra a lacuna.\\
 
 As duas comparações são de naturezas distintas. A primeira mede quanto mais rápido o método é; a segunda determina se o conjunto pode ser processado.\\
 
