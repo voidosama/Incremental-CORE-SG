@@ -29,9 +29,12 @@ measuring the unpartitioned path again.
 """
 import argparse
 import csv
+import gc
 import inspect
 import os
+import subprocess
 import sys
+import threading
 import time
 
 HEADER = ["experiment", "dataset", "n", "dim", "k", "config", "value",
@@ -63,19 +66,109 @@ def capabilities():
     return cuml.__version__, HDBSCAN, ("build_algo" in names), ("build_kwds" in names), names
 
 
-def device_peak_bytes():
+class DevicePeak:
+    """Peak device memory attributable to this run, sampled while it runs.
+
+    The first attempt read RMM statistics after the fact, which returns
+    nothing unless statistics were enabled, and would have missed a
+    transient peak even if it had.
+
+    Two sources, in order. Per-process memory from nvidia-smi is the one
+    to want, but some drivers report it as [N/A] (Windows WDDM does), so
+    the fallback is total device memory with the pre-run level subtracted.
+    The fallback is only honest on a quiet machine: anything else
+    allocating on the same card lands in the number. Which source was
+    used is recorded alongside the measurement.
+    """
+
+    def __init__(self, interval=0.1):
+        self.interval = interval
+        self.peak = -1
+        self.mode = "none"
+        self._base = None
+        self._stop = threading.Event()
+        self._t = None
+
+    @staticmethod
+    def _smi(query):
+        try:
+            out = subprocess.run(["nvidia-smi", "--query-" + query,
+                                  "--format=csv,noheader,nounits"],
+                                 capture_output=True, text=True, timeout=10)
+            return out.stdout if out.returncode == 0 else ""
+        except Exception:
+            return ""
+
+    def _per_process(self):
+        me = str(os.getpid())
+        total = None
+        for line in self._smi("compute-apps=pid,used_memory").splitlines():
+            parts = [q.strip() for q in line.split(",")]
+            if len(parts) >= 2 and parts[0] == me:
+                try:
+                    total = (total or 0) + float(parts[1])
+                except ValueError:
+                    return None          # driver reports [N/A]
+        return total
+
+    def _device_total(self):
+        vals = []
+        for line in self._smi("gpu=memory.used").splitlines():
+            try:
+                vals.append(float(line.strip()))
+            except ValueError:
+                pass
+        return sum(vals) if vals else None
+
+    def _sample_once(self):
+        mb = self._per_process()
+        if mb is not None:
+            self.mode = "per_process"
+            self.peak = max(self.peak, int(mb * 1024 * 1024))
+            return
+        mb = self._device_total()
+        if mb is None:
+            return
+        if self._base is None:
+            self._base = mb
+        self.mode = "device_total_delta"
+        self.peak = max(self.peak, int(max(0.0, mb - self._base) * 1024 * 1024))
+
+    def _loop(self):
+        while not self._stop.is_set():
+            self._sample_once()
+            self._stop.wait(self.interval)
+
+    def __enter__(self):
+        # baseline before any allocation, for the fallback path
+        mb = self._device_total()
+        if mb is not None:
+            self._base = mb
+        self._t = threading.Thread(target=self._loop, daemon=True)
+        self._t.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self._t:
+            self._t.join(timeout=5)
+        self._sample_once()
+        return False
+
+
+def release_pool():
+    """Best effort between runs, so an OOM does not poison the next line."""
     try:
-        import rmm  # noqa: F401
-        from rmm.statistics import get_statistics
-        st = get_statistics()
-        return int(st.peak_bytes) if st else -1
+        import rmm
+        rmm.reinitialize()
     except Exception:
         pass
     try:
         import cupy
-        return int(cupy.get_default_memory_pool().used_bytes())
+        cupy.get_default_memory_pool().free_all_blocks()
     except Exception:
-        return -1
+        pass
+    gc.collect()
 
 
 def one_fit(HDBSCAN, x, mpts, clusters, overlap, build_algo, supports_kwds):
@@ -87,15 +180,16 @@ def one_fit(HDBSCAN, x, mpts, clusters, overlap, build_algo, supports_kwds):
         # and record what was actually asked for.
         v = min(overlap, clusters - 1)
         kwargs["build_kwds"] = {"knn_n_clusters": clusters, "knn_overlap_factor": v}
-    t0 = time.perf_counter()
-    model = HDBSCAN(**kwargs)
-    labels = model.fit_predict(x)
-    secs = time.perf_counter() - t0
+    with DevicePeak() as peak:
+        t0 = time.perf_counter()
+        model = HDBSCAN(**kwargs)
+        labels = model.fit_predict(x)
+        secs = time.perf_counter() - t0
     try:
         labels = labels.get()
     except AttributeError:
         pass
-    return labels, secs, device_peak_bytes(), kwargs
+    return labels, secs, peak.peak, kwargs, peak.mode
 
 
 def main():
@@ -145,7 +239,7 @@ def main():
                 for seed in args.seeds:
                     tag = "C%d" % c
                     try:
-                        labels, secs, peak, kwargs = one_fit(
+                        labels, secs, peak, kwargs, peak_src = one_fit(
                             HDBSCAN, x, args.mpts, c, args.overlap,
                             args.build_algo or None, has_kwds)
                     except Exception as e:
@@ -155,18 +249,22 @@ def main():
                         w.writerow(["cuml_partitioned", label, n, dim, args.mpts,
                                     "clusters", c, seed, -1, "failed", 1])
                         written += 1
+                        release_pool()
                         continue
                     nclust = len(set(int(v) for v in labels) - {-1})
                     for metric, value in (("seconds", secs),
                                           ("peak_device_bytes", peak),
+                                          ("peak_device_source", peak_src),
                                           ("clusters_found", nclust)):
                         w.writerow(["cuml_partitioned", label, n, dim, args.mpts,
                                     "clusters", c, seed, -1, metric, value])
                         written += 1
+                    fh.flush()
                     print("n=%-9d %-5s seed=%-4d %8.2fs  peak=%s  clusters=%d  %s"
                           % (n, tag, seed, secs,
                              ("%.2f GB" % (peak / 1e9)) if peak > 0 else "n/a",
                              nclust, kwargs.get("build_kwds", "{}")))
+                    release_pool()
             del x
 
     print("\nwrote %d rows to %s" % (written, args.out))
